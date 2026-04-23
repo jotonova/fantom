@@ -12,8 +12,25 @@ const pool = new Pool({
 
 const server = Fastify({ logger: true })
 
+// Build allowed origins list from WEB_URLS (comma-separated) or fall back to WEB_URL.
+// In non-production, http://localhost:3000 is always included.
+const rawOrigins = process.env['WEB_URLS'] ?? process.env['WEB_URL'] ?? ''
+const allowedOrigins = new Set(
+  rawOrigins
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean),
+)
+if (process.env['NODE_ENV'] !== 'production') {
+  allowedOrigins.add('http://localhost:3000')
+}
+
 await server.register(cors, {
-  origin: process.env['WEB_URL'] ?? '*',
+  origin: (origin, callback) => {
+    // Allow server-to-server requests and curl (no Origin header).
+    if (!origin || allowedOrigins.has(origin)) return callback(null, true)
+    callback(new Error(`CORS: origin ${origin} not allowed`), false)
+  },
 })
 
 server.get<{ Reply: HealthResponse }>('/health', async (_request, reply) => {

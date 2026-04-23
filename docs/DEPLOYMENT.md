@@ -41,7 +41,9 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
    | `REDIS_URL`    | (copy from Render Redis below)      |
    | `PORT`         | `3001`                             |
    | `NODE_ENV`     | `production`                       |
-   | `WEB_URL`      | `https://<your-vercel-app>.vercel.app` |
+   | `WEB_URLS`     | `https://<your-vercel-app>.vercel.app` (comma-separate multiple origins) |
+
+   > **Note:** `WEB_URL` (single origin) is still supported as a fallback but deprecated — prefer `WEB_URLS`.
 
 5. Deploy.
 
