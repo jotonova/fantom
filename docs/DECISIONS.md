@@ -95,3 +95,52 @@ Use PostgreSQL as the primary persistent store and Redis as the queue backend an
 ### Consequences
 - Two managed data services to operate. At F1 scale this is straightforward on Render's free tier.
 - Redis data is volatile by default — only non-durable data (cache, ephemeral queue state) should live there. Durable job records are checkpointed to Postgres.
+
+---
+
+## Decision #002 — Vercel Monorepo Deployment Configuration
+**Date:** 2026-04-23
+**Status:** Adopted
+**Context:** Initial F1 frontend deployment to Vercel hit multiple compounding issues that took ~12 commits to resolve.
+
+### Issues Encountered (in order)
+1. **First deploy failed:** corepack enable could not write to /usr/bin/pnpm on Render's read-only filesystem (this was actually the API issue, but symptomatic of how monorepo build commands need careful crafting per platform).
+2. **next.config.ts incompatible:** Next.js 14.2 doesn't support TypeScript config files; required conversion to next.config.mjs.
+3. **Vercel couldn't resolve @fantom/shared:** When Root Directory was set to apps/web, Vercel's build couldn't walk up to the workspace root for the shared package.
+4. **Vercel webhook didn't install on first connect:** Even after Vercel UI showed "Connected", no webhook appeared on github.com/jotonova/fantom/settings/hooks. Multiple reconnect attempts failed.
+5. **Next.js framework not detected:** Even with Root Directory at repo root and vercel.json's outputDirectory pointing at apps/web/.next, Vercel's framework detector couldn't find "next" in the root package.json (only in apps/web/package.json).
+6. **Vercel auto-selected Node 24 instead of 20:** .nvmrc was respected by Render but ignored by Vercel; required explicit setting in Vercel UI.
+7. **ignoreCommand was too aggressive:** Empty trigger commits were skipped; required either real file changes or manual "Use project's Ignore Build Step" toggle off.
+
+### Final Working Configuration
+
+**vercel.json (at repo root):**
+- "framework": "nextjs" — required for Vercel to route through Next.js
+- "buildCommand": pnpm filters @fantom/shared then @fantom/web
+- "installCommand": pnpm install --frozen-lockfile
+- "outputDirectory": apps/web/.next
+- "ignoreCommand": git diff against apps/web, packages/shared, AND vercel.json
+
+**Root package.json:**
+- "next": "14.2.0" added as a phantom dependency to satisfy Vercel's framework detector. Real installation lives in apps/web/ via pnpm workspaces.
+
+**Vercel Project Settings UI:**
+- Node.js Version: explicitly set to 20.x (do not rely on .nvmrc)
+- Root Directory: BLANK (let vercel.json drive)
+- Framework Preset: Other (vercel.json overrides)
+
+### When Adding the Next App to the Monorepo (e.g., for new modules)
+- Either: add it to the existing vercel.json's buildCommand pipeline
+- Or: create a separate Vercel project for it with its own vercel.json
+
+### When Reconnecting Git
+- After a "Connect" action on Vercel, ALWAYS verify the webhook actually installed at github.com/jotonova/fantom/settings/hooks
+- If no webhook appears, fully uninstall the Vercel GitHub App (github.com/settings/installations), then reinstall via Vercel's connect flow
+- A Deploy Hook (under Project Settings → Git) is a reliable fallback when the auto-webhook fails
+
+### Fast Manual Redeploy Recipe
+For any commit that doesn't change apps/web or packages/shared but should still deploy (e.g., vercel.json edits):
+1. Deployments tab → click latest deployment → Redeploy
+2. UNCHECK "Use existing Build Cache"
+3. UNCHECK "Use project's Ignore Build Step"
+4. Confirm

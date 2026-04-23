@@ -74,3 +74,55 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
 | API     | `PORT`                | `3001`                         |
 | API     | `WEB_URL`             | Vercel deployment URL          |
 | Web     | `NEXT_PUBLIC_API_URL` | Render API service URL         |
+
+---
+
+## Vercel — Monorepo Quick Reference
+
+> Captured after the F1 deployment saga (see DECISIONS.md — Decision #002 for full context).
+
+### vercel.json (repo root)
+
+```json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm --filter @fantom/shared build && pnpm --filter @fantom/web build",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "outputDirectory": "apps/web/.next",
+  "framework": "nextjs",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- ./apps/web ./packages/shared ./vercel.json || exit 1"
+}
+```
+
+### Root package.json — phantom dep required
+
+Vercel's framework detector scans the **root** `package.json` for `"next"`. Even though Next.js is installed in `apps/web/`, add it at root too:
+
+```json
+"dependencies": {
+  "next": "14.2.0"
+}
+```
+
+### Vercel Project Settings UI (must set manually)
+
+| Setting | Value |
+|---|---|
+| Root Directory | *(blank — let vercel.json drive)* |
+| Framework Preset | Other |
+| Node.js Version | **20.x** (do NOT rely on .nvmrc — Vercel ignores it) |
+| Environment Variables | `NEXT_PUBLIC_API_URL` → Render API URL |
+
+### Webhook gotcha
+
+After connecting the GitHub repo in Vercel, verify the webhook actually installed at:
+`github.com/jotonova/fantom/settings/hooks`
+
+If missing: uninstall the Vercel GitHub App at `github.com/settings/installations`, then reconnect. A **Deploy Hook** (Project Settings → Git) is a reliable manual fallback.
+
+### Force-redeploy when ignoreCommand would skip
+
+1. Deployments tab → latest deployment → **Redeploy**
+2. Uncheck **"Use existing Build Cache"**
+3. Uncheck **"Use project's Ignore Build Step"**
+4. Confirm
