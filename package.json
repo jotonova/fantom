@@ -13,6 +13,9 @@
     "typecheck": "pnpm --recursive typecheck",
     "test": "pnpm --recursive test"
   },
+  "dependencies": {
+    "next": "14.2.0"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
