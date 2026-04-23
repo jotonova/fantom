@@ -1,0 +1,10 @@
+{
+  "name": "@fantom/config",
+  "private": true,
+  "version": "0.1.0",
+  "exports": {
+    "./tsconfig": "./tsconfig.base.json",
+    "./eslint": "./eslint.config.mjs",
+    "./prettier": "./prettier.config.mjs"
+  }
+}
