@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "pnpm --filter @fantom/shared build && pnpm --filter @fantom/web build",
+  "buildCommand": "pnpm --filter @fantom/shared build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/web build",
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": "apps/web/.next",
   "framework": "nextjs",
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- ./apps/web ./packages/shared ./vercel.json || exit 1"
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- ./apps/web ./packages/shared ./packages/ui ./vercel.json || exit 1"
 }

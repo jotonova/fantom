@@ -3,14 +3,16 @@
 @tailwind utilities;
 
 :root {
-  --background: #09090b;
-  --foreground: #fafafa;
-  --muted: #27272a;
-  --muted-foreground: #a1a1aa;
-  --border: #27272a;
-  --accent: #7c3aed;
-  --accent-light: #a78bfa;
-  --accent-glow: rgba(124, 58, 237, 0.3);
+  /* Fantom brand tokens */
+  --fantom-steel: #0D1B2A;
+  --fantom-steel-lighter: #162232;
+  --fantom-steel-border: #1E3045;
+  --fantom-blue: #1B4F8C;
+  --fantom-blue-bright: #3B82F6;
+  --fantom-gold: #B8862A;
+  --fantom-gold-bright: #F5C842;
+  --fantom-text: #E8EDF2;
+  --fantom-text-muted: #7A8FA6;
 }
 
 * {
@@ -19,17 +21,17 @@
 
 html {
   color-scheme: dark;
-}
-
-body {
-  background-color: var(--background);
-  color: var(--foreground);
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+body {
+  background-color: var(--fantom-steel);
+  color: var(--fantom-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
 ::selection {
-  background-color: var(--accent);
+  background-color: var(--fantom-blue);
   color: #fff;
 }

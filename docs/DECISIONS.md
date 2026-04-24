@@ -258,6 +258,59 @@ For any commit that doesn't change apps/web or packages/shared but should still 
 
 ---
 
+---
+
+## Decision #005 — F4 UI Library, Client-Side Auth, and Route Groups
+
+**Date:** 2026-04-24
+**Status:** Adopted
+**Context:** F4 introduces the authenticated shell. Three foundational frontend choices were made.
+
+### Choice A: @fantom/ui — Dedicated Workspace UI Package
+
+**Decision:** New `packages/ui` workspace package with 8 Radix UI-based components.
+
+**Reasoning:**
+- Centralises all design system components so future apps (mobile, embed) import from one place.
+- Radix UI provides WAI-ARIA-compliant accessibility primitives (keyboard nav, focus management, ARIA roles) without bespoke implementation.
+- `clsx + tailwind-merge` as the `cn()` utility gives safe class merging without specificity fights.
+- Package uses a standalone `tsconfig.json` (does NOT extend `tsconfig.base.json`) because the base config uses `module: NodeNext` (requires `.js` extensions on all imports) and `exactOptionalPropertyTypes: true` (conflicts with Radix UI prop types). The UI package uses `module: ESNext` + `moduleResolution: Bundler` + `jsx: react-jsx`.
+
+**Consequences:**
+- `apps/web/tailwind.config.ts` must scan `../../packages/ui/src/**/*.{ts,tsx}` so fantom token classes used in components are included in the CSS bundle.
+- `apps/web/next.config.mjs` must include `@fantom/ui` in `transpilePackages`.
+- `vercel.json` build command must compile `@fantom/ui` before `@fantom/web`.
+
+### Choice B: Client-Side Auth State (React Context + localStorage)
+
+**Decision:** Auth state lives in `AuthProvider` (React context), tokens in localStorage, no server-side session.
+
+**Reasoning:**
+- F4 hard constraint: no server-side API calls from Next.js server components. All data fetching is client-side.
+- JWTs are short-lived (15 min) and already stateless — reading them from localStorage on the client avoids a server-side session store entirely.
+- `AuthProvider` wraps the root layout via a `<Providers>` client component boundary, so `app/layout.tsx` remains a server component.
+- 401 retry in `api-client.ts` uses an `isRefreshing` flag to prevent infinite refresh loops.
+
+**Consequences:**
+- Page.tsx for the landing page and protected layouts must be client components (they use `useAuth()`).
+- Auth state is lost on hard refresh — the `useEffect` in `AuthProvider` calls `/me` on mount to restore it from the stored access token.
+- localStorage is not available during SSR; all token reads are guarded with `typeof window !== 'undefined'`.
+
+### Choice C: Next.js Route Groups for Auth Boundary
+
+**Decision:** Protected pages live under `app/(authenticated)/`; the group layout enforces auth with `useEffect` redirect.
+
+**Reasoning:**
+- Route groups (`(name)`) segment routing without adding URL segments — `/dashboard` not `/(authenticated)/dashboard`.
+- The group layout is the single enforcement point for auth; individual pages don't need to repeat the guard.
+- `useEffect` redirect (not middleware) keeps the auth check client-side, consistent with the F4 no-server-fetching constraint.
+
+**Consequences:**
+- A flash of the loading spinner is possible on hard refresh to a protected page — acceptable for an internal tool.
+- Middleware-based auth redirect (faster, no flash) is a straightforward future upgrade when server-side token verification is added.
+
+---
+
 ### ⚠️ MANDATORY ROTATION TRIGGER
 
 > **Before any external user (non-Justin, non-Amy) is added to Fantom, the following MUST happen:**

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { Providers } from './providers'
 
 export const metadata: Metadata = {
   title: 'Fantom — Video at Scale',
@@ -12,13 +13,15 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#09090b',
+  themeColor: '#0D1B2A',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen bg-zinc-950 text-zinc-50 antialiased">{children}</body>
+      <body className="min-h-screen bg-fantom-steel text-fantom-text antialiased">
+        <Providers>{children}</Providers>
+      </body>
     </html>
   )
 }

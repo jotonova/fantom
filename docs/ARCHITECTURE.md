@@ -12,7 +12,29 @@ fantom/
 └── packages/
     ├── config/   # Shared TypeScript, ESLint, Prettier configs
     ├── db/       # Drizzle schema, migrations, and singleton client (@fantom/db)
-    └── shared/   # Shared TypeScript types (HealthResponse, etc.)
+    ├── shared/   # Shared TypeScript types (HealthResponse, etc.)
+    └── ui/       # @fantom/ui — React component library (Radix UI + Tailwind)
+```
+
+### Frontend Structure (apps/web)
+
+```
+apps/web/
+├── app/
+│   ├── (authenticated)/      # Route group — all pages require auth
+│   │   ├── layout.tsx        # Sidebar + topbar shell; redirects to /login if unauth
+│   │   └── dashboard/
+│   │       └── page.tsx
+│   ├── login/
+│   │   └── page.tsx
+│   ├── globals.css           # Tailwind directives + fantom CSS custom properties
+│   ├── layout.tsx            # Root layout — wraps with <Providers>
+│   ├── page.tsx              # Landing page (client component)
+│   └── providers.tsx         # Client boundary — mounts AuthProvider
+└── src/
+    └── lib/
+        ├── api-client.ts     # fetch wrapper: auth headers, 401 retry, token management
+        └── auth-store.tsx    # AuthProvider + useAuth() React context
 ```
 
 ## Stack
@@ -20,7 +42,9 @@ fantom/
 | Layer       | Technology              | Rationale                                                  |
 |-------------|-------------------------|------------------------------------------------------------|
 | Frontend    | Next.js 14 App Router   | RSC, streaming, excellent DX, first-class Vercel support   |
+| UI library  | @fantom/ui (Radix UI)   | WAI-ARIA primitives + Tailwind tokens, shared across apps  |
 | Styling     | Tailwind CSS v3         | Utility-first, zero-runtime, consistent design tokens      |
+| Auth state  | React context           | Client-side AuthProvider + useAuth(); tokens in localStorage|
 | Backend     | Fastify 4               | High-throughput, TypeScript-native, schema validation      |
 | Database    | PostgreSQL (Render)     | ACID-compliant, relational, RLS for tenant isolation       |
 | ORM         | Drizzle ORM             | TypeScript-native, plain-SQL migrations, Postgres RLS-aware|

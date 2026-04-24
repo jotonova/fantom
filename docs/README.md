@@ -52,9 +52,18 @@ pnpm --filter @fantom/db db:seed
 
 ```bash
 # Build shared packages first, then start apps
-pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build
+pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build
 pnpm dev
 ```
+
+### Dev login credentials
+
+| Email | Password | Tenant |
+|-------|----------|--------|
+| novacor.icaz@gmail.com | 061284 | novacor |
+
+> **Note:** These are seeded credentials for local and internal development only.
+> See `docs/DECISIONS.md → MANDATORY ROTATION TRIGGER` for the gate that must be cleared before any external user is added.
 
 This starts `next dev` (port 3000) and `tsx watch` (port 3001) in parallel.
 
@@ -70,7 +79,8 @@ fantom/
 └── packages/
     ├── config/   # Shared TS/ESLint/Prettier configs
     ├── db/       # Drizzle schema, migrations, singleton client
-    └── shared/   # Shared TypeScript types
+    ├── shared/   # Shared TypeScript types
+    └── ui/       # @fantom/ui — React component library
 ```
 
 ## Common Commands
