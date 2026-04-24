@@ -89,20 +89,45 @@ fantom/
 
 ## API Endpoints
 
-| Method | Path            | Description                              |
-|--------|-----------------|------------------------------------------|
-| GET    | `/health`       | Liveness check                           |
-| GET    | `/db/health`    | DB connectivity + latency + migration count |
-| GET    | `/tenants/me`   | Current tenant data (requires X-Tenant-Slug header) |
+| Method | Path              | Auth     | Description                                  |
+|--------|-------------------|----------|----------------------------------------------|
+| GET    | `/health`         | None     | Liveness check                               |
+| GET    | `/db/health`      | None     | DB connectivity + latency + migration count  |
+| POST   | `/auth/login`     | None     | Exchange credentials for token pair          |
+| POST   | `/auth/refresh`   | None     | Rotate refresh token, get new access token   |
+| POST   | `/auth/logout`    | None     | Revoke a refresh token / session             |
+| GET    | `/me`             | Bearer   | Current user + tenant data                   |
+| GET    | `/tenants/me`     | Bearer   | Current tenant details                       |
+| GET    | `/auth/debug`     | None     | Echo request.user + tenantId (dev only)      |
 
-### Example: resolve a tenant
+### Smoke test — login → verify → me
 
 ```bash
-# With header (all environments)
-curl -H "X-Tenant-Slug: novacor" https://fantom-api.onrender.com/tenants/me
+API=https://fantom-api.onrender.com
 
-# Dev-only: query-param shorthand
-curl https://fantom-api.onrender.com/tenants/me?slug=novacor
+# 1. Login — returns accessToken and refreshToken
+LOGIN=$(curl -s -X POST "$API/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"novacor.icaz@gmail.com","password":"061284"}')
+
+echo $LOGIN | python3 -m json.tool
+
+ACCESS=$(echo $LOGIN | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])")
+REFRESH=$(echo $LOGIN | python3 -c "import sys,json; print(json.load(sys.stdin)['refreshToken'])")
+
+# 2. GET /me with the access token
+curl -s "$API/me" -H "Authorization: Bearer $ACCESS" | python3 -m json.tool
+
+# 3. Refresh the token pair
+curl -s -X POST "$API/auth/refresh" \
+  -H "Content-Type: application/json" \
+  -d "{\"refreshToken\":\"$REFRESH\"}" | python3 -m json.tool
+
+# 4. Logout (revoke the refresh token)
+curl -s -X POST "$API/auth/logout" \
+  -H "Content-Type: application/json" \
+  -d "{\"refreshToken\":\"$REFRESH\"}"
+# → 204 No Content
 ```
 
 ## Documentation

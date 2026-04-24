@@ -39,10 +39,47 @@ Next.js (Vercel)
   │  Client Components call API via NEXT_PUBLIC_API_URL
   ▼
 Fastify API (Render)
-  │  tenant-context plugin resolves X-Tenant-Slug → tenantId
-  │  All tenant-scoped queries run with set_config('app.current_tenant_id', ...)
-  ├──▶ PostgreSQL   — persistent data (tenants, users, jobs, assets)
+  │  1. auth plugin: Bearer token → request.user + request.tenantId
+  │  2. tenant-context plugin: falls back to X-Tenant-Slug if no JWT tenant
+  │  3. All tenant-scoped queries: set_config('app.current_tenant_id', ...)
+  ├──▶ PostgreSQL   — persistent data (tenants, users, sessions, jobs, assets)
   └──▶ Redis        — job queues (BullMQ) + response caching
+```
+
+## Authentication Flow (F3)
+
+```
+POST /auth/login { email, password }
+  │
+  ├── Look up user by email (users table — no RLS)
+  ├── bcrypt.compare(password, passwordHash)  [cost 12]
+  │
+  ├── In transaction:
+  │     set_config('app.current_user_id', userId)     ← unlocks tenant_users self-access
+  │     SELECT tenant_users JOIN tenants               ← RLS: own memberships policy
+  │     set_config('app.current_tenant_id', tenantId) ← unlocks tenants row
+  │     SELECT tenants WHERE id = tenantId
+  │
+  ├── jwt.sign({ sub: userId, tenantId, role }, { expiresIn: '15m' })
+  ├── randomBytes(32).toString('hex')                  ← opaque refresh token
+  ├── sha256(refreshToken)                             ← stored in sessions table
+  │
+  └── Response: { accessToken, refreshToken, user, tenant }
+
+Subsequent requests (protected routes):
+  Authorization: Bearer <accessToken>
+  │
+  ├── auth plugin (onRequest): jwt.verify(token) → request.user + request.tenantId
+  ├── tenant-context plugin: tenantId already set — skips X-Tenant-Slug lookup
+  └── route handler: db.transaction → set_config → RLS-enforced queries
+
+POST /auth/refresh { refreshToken }
+  │
+  ├── sha256(refreshToken) → look up session
+  ├── Check: expires_at > now AND revoked_at IS NULL
+  ├── Revoke old session (set revoked_at)
+  ├── Insert new session with new token pair
+  └── Response: { accessToken, refreshToken }  ← rotated pair
 ```
 
 ## Shared Types
@@ -63,28 +100,30 @@ Fantom uses a **shared database, schema-per-tenant-via-RLS** architecture:
 
 ### Tables
 
-| Table             | Purpose                                           |
-|-------------------|---------------------------------------------------|
-| `tenants`         | Top-level tenant entities (slug, name, status)    |
-| `users`           | Individual user identities (cross-tenant)         |
-| `tenant_users`    | N:N membership with role (owner / editor / viewer)|
-| `tenant_settings` | Per-tenant key-value config store (jsonb values)  |
+| Table             | RLS | Purpose                                           |
+|-------------------|-----|---------------------------------------------------|
+| `tenants`         | ✅  | Top-level tenant entities (slug, name, status)    |
+| `users`           | ❌  | Individual user identities (cross-tenant)         |
+| `tenant_users`    | ✅  | N:N membership with role (owner / editor / viewer)|
+| `tenant_settings` | ✅  | Per-tenant key-value config store (jsonb values)  |
+| `sessions`        | ❌  | Refresh token tracking + revocation (F3)          |
+
+`users` and `sessions` are intentionally NOT RLS-restricted. Users are cross-tenant identities; sessions are auth tokens that establish the context RLS depends on (chicken-and-egg).
 
 `users` is intentionally NOT RLS-restricted — a user identity exists independently of any single tenant and can be linked to multiple tenants via `tenant_users`.
 
 ### Request Lifecycle
 
-1. Fastify `onRequest` hook (tenant-context plugin) reads `X-Tenant-Slug` from the request header.
-2. Plugin looks up the tenant by slug (owner-role connection — bypasses RLS for this system lookup).
-3. `request.tenantId` is set on the Fastify request object.
-4. Route handlers that touch tenant-scoped data wrap queries in a Drizzle transaction:
+1. **Auth plugin** (`onRequest`, runs first): parses `Authorization: Bearer <token>`, verifies JWT, sets `request.user = {id, tenantId, role}` and `request.tenantId`.
+2. **Tenant-context plugin** (`onRequest`, runs second): if `request.tenantId` is already set (from JWT), skips header lookup. Otherwise reads `X-Tenant-Slug` header and resolves slug → tenantId.
+3. **Route handler**: wraps tenant-scoped queries in a Drizzle transaction with `set_config`:
    ```typescript
    await db.transaction(async (tx) => {
      await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
      // ... tenant-scoped queries here — RLS enforced at DB level
    })
    ```
-5. `set_config(..., true)` = LOCAL scope — the GUC resets automatically when the transaction ends.
+4. `set_config(..., true)` = LOCAL scope — the GUC resets automatically when the transaction ends.
 
 ### RLS Policies
 
@@ -98,11 +137,11 @@ USING (tenant_id::text = current_setting('app.current_tenant_id', true))
 
 `current_setting('app.current_tenant_id', true)` returns `NULL` if the GUC is not set (the `true` = missing_ok). A `NULL` comparison always evaluates to false, so rows are invisible when no tenant is active.
 
-### F2 Limitation — Owner Role Bypasses RLS
+### Database Role Hardening (F3)
 
-The application currently connects as the Render Postgres owner role, which **bypasses RLS by default**. RLS policies are in place and `set_config` is called correctly on every tenant-scoped transaction, but enforcement only activates if the role does NOT have the `BYPASSRLS` attribute.
+Migration `0003_app_user_role.sql` creates a restricted `app_user` Postgres role with `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION` — no `BYPASSRLS`. Once `DATABASE_URL` is updated to use `app_user` credentials, RLS becomes genuinely enforced at the database level for all application queries.
 
-**F3 action item:** Provision a dedicated `app_user` role without `BYPASSRLS`, grant it table-level privileges, and update `DATABASE_URL` to use that role. This makes RLS genuinely enforced at the DB level for all application queries.
+The owner-role URL is retained as `MIGRATE_DATABASE_URL`, used only by `db:migrate` (which requires DDL privileges). See `docs/DEPLOYMENT.md → Database Role Hardening` for the full rotation procedure.
 
 ### Tenant Resolution
 

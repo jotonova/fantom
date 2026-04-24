@@ -92,13 +92,59 @@ The seed is idempotent — running it multiple times is safe.
 
 ## Environment Summary
 
-| Service | Env Var               | Source                       |
-|---------|-----------------------|------------------------------|
-| API     | `DATABASE_URL`        | Render PostgreSQL internal URL |
-| API     | `REDIS_URL`           | Render Redis internal URL      |
-| API     | `PORT`                | `3001`                         |
-| API     | `WEB_URLS`            | Vercel deployment URL(s)       |
-| Web     | `NEXT_PUBLIC_API_URL` | Render API service URL         |
+| Service | Env Var                | Source                                                          |
+|---------|------------------------|-----------------------------------------------------------------|
+| API     | `DATABASE_URL`         | Render PostgreSQL internal URL (app_user after role hardening)  |
+| API     | `MIGRATE_DATABASE_URL` | Render PostgreSQL internal URL (owner role — for migrations)    |
+| API     | `JWT_SECRET`           | `openssl rand -base64 64`                                       |
+| API     | `REDIS_URL`            | Render Redis internal URL                                       |
+| API     | `PORT`                 | `3001`                                                          |
+| API     | `WEB_URLS`             | Vercel deployment URL(s)                                        |
+| Web     | `NEXT_PUBLIC_API_URL`  | Render API service URL                                          |
+
+---
+
+## Database Role Hardening (F3)
+
+Migration `0003_app_user_role.sql` creates a restricted `app_user` Postgres role. Once this migration deploys, follow these steps to activate genuine RLS enforcement:
+
+### Step 1 — Grab the generated password
+
+After the Render pre-deploy step runs, open **Render dashboard → your API service → Logs → Deploy logs**. Search for `app_user ROLE CREATED`. Copy the 64-character hex password from the RAISE NOTICE output.
+
+> If the role already existed (re-deploy scenario), see the log for instructions on resetting the password manually.
+
+### Step 2 — Build the app_user connection string
+
+Use the **Internal Database URL** format from Render's PostgreSQL dashboard, but substitute the credentials:
+
+```
+postgres://app_user:<copied-password>@<render-internal-host>/<dbname>
+```
+
+### Step 3 — Update Render env vars
+
+In **Render → API service → Environment**:
+
+| Action | Key | Value |
+|--------|-----|-------|
+| **Add** | `MIGRATE_DATABASE_URL` | The current `DATABASE_URL` value (owner-role URL — keep for migrations) |
+| **Update** | `DATABASE_URL` | The new `app_user` connection string from Step 2 |
+| **Add** | `JWT_SECRET` | Output of `openssl rand -base64 64` |
+
+### Step 4 — Manual redeploy
+
+Trigger a manual redeploy from the Render dashboard. The pre-deploy step will use `MIGRATE_DATABASE_URL` (owner role) to run migrations, and the running API will use `DATABASE_URL` (app_user, no BYPASSRLS). RLS is now genuinely enforced.
+
+### Step 5 — Seed production (one-time)
+
+```bash
+# From repo root, using the EXTERNAL owner-role URL (not internal)
+DATABASE_URL="postgres://owner:password@<external-render-host>/<dbname>" pnpm --filter @fantom/db db:seed
+```
+
+> Use the owner-role URL for the seed (it needs to INSERT without RLS restrictions).
+> The seed is idempotent — safe to re-run.
 
 ---
 

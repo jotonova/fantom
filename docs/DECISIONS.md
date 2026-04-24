@@ -200,3 +200,70 @@ For any commit that doesn't change apps/web or packages/shared but should still 
 **Consequences:**
 - Web clients must include `X-Tenant-Slug` on every API request (or the API returns 401).
 - Slugs must be globally unique across all tenants (enforced by `UNIQUE` constraint on `tenants.slug`).
+
+---
+
+## Decision #004 — F3 Authentication Strategy
+**Date:** 2026-04-23
+**Status:** Adopted
+**Context:** F3 introduces user authentication. Fantom is an internal tool at this phase (Justin + Amy only). The auth model must be pragmatic and evolvable without over-engineering for a two-person system.
+
+### Choice A: Per-User Password Auth (not shared code, not magic link, not OAuth)
+
+**Decision:** Email + bcrypt password for F3. OAuth and magic links deferred.
+
+**Reasoning:**
+- Shared codes (e.g. "access code for the app") conflate auth with access control and are trivially brute-forced.
+- Magic links require an email delivery pipeline (Resend/SES config, spam risk, inbox latency) — unnecessary overhead when the only users are Justin and Amy who can be seeded with known credentials.
+- OAuth (Google, etc.) requires registering OAuth applications, handling callback URLs, and managing refresh flows for third-party tokens — significant surface area for a two-user internal tool.
+- Bcrypt passwords are well-understood, easy to rotate, and the implementation is battle-tested.
+
+**Consequences:**
+- A password reset flow must be built before external users arrive (deferred to a future phase).
+- Password strength is not enforced server-side yet — see mandatory rotation trigger below.
+
+### Choice B: bcrypt Cost 12
+
+**Decision:** Cost factor 12 (approximately 250–400ms per hash on modern hardware).
+
+**Reasoning:**
+- OWASP recommends cost ≥ 10. Cost 12 gives meaningful brute-force resistance without making the login endpoint feel slow at Fantom's current scale (essentially 0 concurrent logins).
+- Cost 14 would be ~4× slower (1s+) — over-engineered for a two-user system.
+- Cost factor is embedded in the bcrypt hash string, so it can be raised in a future migration by re-hashing on next login.
+
+### Choice C: Access Token + Refresh Token Split
+
+**Decision:** Short-lived JWTs (15 min) + long-lived opaque refresh tokens (30 days, stored as SHA-256 hash in `sessions` table).
+
+**Reasoning:**
+- Pure JWT (no refresh): a stolen token is valid for its entire lifetime with no revocation path. Unacceptable even for an internal tool.
+- Pure sessions (server-side): requires a session store lookup on every request. Adds DB load on every API call.
+- Access + refresh split: stateless verification on the hot path (JWT), revocable sessions via the `sessions` table (only consulted on refresh or logout). Industry-standard approach.
+- Opaque refresh token (not a JWT): easier to revoke (just hash-match and set `revoked_at`). JWTs as refresh tokens require a blocklist, which adds complexity without benefit.
+
+**Token rotation:** refresh always issues a new pair and revokes the old session. This limits the damage if a refresh token is captured in transit.
+
+### Choice D: Postgres `app_user` Role
+
+**Decision:** Create a restricted `app_user` Postgres role (NOSUPERUSER, no BYPASSRLS) and update `DATABASE_URL` to use it. Owner-role URL retained as `MIGRATE_DATABASE_URL` for migration runner only.
+
+**Reasoning:**
+- The application running as the owner role bypasses all RLS policies — the multi-tenant data isolation added in F2 is effectively theatre until this is fixed.
+- `app_user` cannot bypass RLS, cannot create/drop tables, and cannot manage roles. The blast radius of a compromised API process is bounded to DML on the granted tables.
+- Two connection strings (`DATABASE_URL` for the API, `MIGRATE_DATABASE_URL` for the migration runner) is a small operational cost for a meaningful security boundary.
+
+**Consequences:**
+- Justin must complete the DATABASE_URL rotation procedure in `docs/DEPLOYMENT.md → Database Role Hardening` after migration 0003 deploys.
+- `db:generate` (drizzle-kit) must use `MIGRATE_DATABASE_URL` or the owner URL locally — `drizzle.config.ts` is updated accordingly.
+
+---
+
+### ⚠️ MANDATORY ROTATION TRIGGER
+
+> **Before any external user (non-Justin, non-Amy) is added to Fantom, the following MUST happen:**
+>
+> 1. The default password `061284` must be rotated for all existing users via a dedicated password-change flow or direct DB update.
+> 2. A minimum password policy must be enforced server-side (length ≥ 12, complexity rules).
+> 3. Rate limiting on `/auth/login` must be verified active (currently: 5 req/min/IP).
+>
+> **This is a hard gate, not a suggestion.** Shipping external users with `061284` as a seeded password would be a critical security vulnerability. The password is in the git history — it is considered public knowledge and must not be used in any production-facing context beyond Justin and Amy's internal sessions.

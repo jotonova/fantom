@@ -3,14 +3,24 @@ import { db, pool } from '@fantom/db'
 import { sql } from 'drizzle-orm'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import fastifyJwt from '@fastify/jwt'
+import rateLimit from '@fastify/rate-limit'
 import type { HealthResponse, DbHealthResponse } from '@fantom/shared'
+import authPlugin from './plugins/auth.js'
 import tenantContextPlugin from './plugins/tenant-context.js'
+import authRoutes from './routes/auth.js'
 import tenantRoutes from './routes/tenants.js'
+
+// Fail fast in production if JWT_SECRET is not set.
+if (process.env['NODE_ENV'] === 'production' && !process.env['JWT_SECRET']) {
+  console.error('FATAL: JWT_SECRET env var is required in production. Exiting.')
+  process.exit(1)
+}
 
 const server = Fastify({ logger: true })
 
-// Build allowed origins list from WEB_URLS (comma-separated) or fall back to WEB_URL.
-// In non-production, http://localhost:3000 is always included.
+// ── CORS ──────────────────────────────────────────────────────────────────────
+
 const rawOrigins = process.env['WEB_URLS'] ?? process.env['WEB_URL'] ?? ''
 const allowedOrigins = new Set(
   rawOrigins
@@ -29,8 +39,31 @@ await server.register(cors, {
   },
 })
 
+// ── JWT ───────────────────────────────────────────────────────────────────────
+
+await server.register(fastifyJwt, {
+  secret: process.env['JWT_SECRET'] ?? 'dev-secret-do-not-use-in-production',
+})
+
+// ── Rate limiting (opt-in per route) ─────────────────────────────────────────
+
+await server.register(rateLimit, { global: false })
+
+// ── Plugins (order matters: auth → tenant-context → routes) ──────────────────
+
+// 1. Auth: parses Bearer token → sets request.user + request.tenantId from JWT.
+await server.register(authPlugin)
+
+// 2. Tenant-context: falls back to X-Tenant-Slug header only if JWT didn't
+//    already set tenantId.
 await server.register(tenantContextPlugin)
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+await server.register(authRoutes)
 await server.register(tenantRoutes)
+
+// ── Health endpoints ──────────────────────────────────────────────────────────
 
 server.get<{ Reply: HealthResponse }>('/health', async (_request, reply) => {
   return reply.send({
@@ -59,7 +92,6 @@ server.get<{ Reply: DbHealthResponse & { migrationsApplied: number } }>(
 
     if (connected) {
       try {
-        // drizzle-kit stores migration history in drizzle.__drizzle_migrations
         const result = await db.execute(
           sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
         )
@@ -68,7 +100,6 @@ server.get<{ Reply: DbHealthResponse & { migrationsApplied: number } }>(
           migrationsApplied = row['count']
         }
       } catch {
-        // Table doesn't exist yet — migrations have not been run
         migrationsApplied = 0
       }
     }
@@ -82,6 +113,8 @@ server.get<{ Reply: DbHealthResponse & { migrationsApplied: number } }>(
     })
   },
 )
+
+// ── Start ─────────────────────────────────────────────────────────────────────
 
 const port = Number(process.env['PORT'] ?? 3001)
 

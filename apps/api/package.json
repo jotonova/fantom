@@ -17,12 +17,16 @@
     "@fantom/db": "workspace:*",
     "@fantom/shared": "workspace:*",
     "@fastify/cors": "^9.0.0",
+    "@fastify/jwt": "^8.0.0",
+    "@fastify/rate-limit": "^9.0.0",
+    "bcrypt": "^5.1.0",
     "drizzle-orm": "^0.38.0",
     "fastify": "^4.28.0",
     "fastify-plugin": "^4.5.0",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"

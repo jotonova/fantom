@@ -2,36 +2,21 @@ import { eq, sql } from 'drizzle-orm'
 import fp from 'fastify-plugin'
 import type { FastifyPluginAsync } from 'fastify'
 import { db, tenants } from '@fantom/db'
+import { requireAuth } from '../plugins/auth.js'
 
 const tenantRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.get('/tenants/me', async (request, reply) => {
-    let tenantId = request.tenantId
-
-    // Dev-only: accept ?slug=<slug> as a convenience override so you can test
-    // with curl without sending the X-Tenant-Slug header.
-    if (!tenantId && process.env['NODE_ENV'] !== 'production') {
-      const query = request.query as Record<string, unknown>
-      const slugParam = query['slug']
-      if (typeof slugParam === 'string' && slugParam) {
-        const rows = await db
-          .select({ id: tenants.id })
-          .from(tenants)
-          .where(eq(tenants.slug, slugParam))
-          .limit(1)
-        tenantId = rows[0]?.id ?? null
-      }
-    }
+  // GET /tenants/me — returns the active tenant's details for the authenticated user.
+  // Requires a valid Bearer token (requireAuth). The tenant is resolved from the
+  // JWT payload by the auth plugin, NOT from X-Tenant-Slug (no header bypass).
+  fastify.get('/tenants/me', { preHandler: requireAuth }, async (request, reply) => {
+    const tenantId = request.tenantId
 
     if (!tenantId) {
       return reply.code(404).send({ error: 'No tenant resolved' })
     }
 
-    // Run inside a transaction so SET LOCAL is scoped to this request.
-    // set_config(name, value, is_local=true) is the parameterised equivalent
-    // of SET LOCAL — safe against SQL injection and transactionally scoped.
-    const resolvedId = tenantId
     const tenant = await db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${resolvedId}, true)`)
+      await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
 
       const rows = await tx
         .select({
@@ -41,7 +26,7 @@ const tenantRoutes: FastifyPluginAsync = async (fastify) => {
           status: tenants.status,
         })
         .from(tenants)
-        .where(eq(tenants.id, resolvedId))
+        .where(eq(tenants.id, tenantId))
         .limit(1)
 
       return rows[0]

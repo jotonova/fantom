@@ -10,30 +10,40 @@ declare module 'fastify' {
   }
 }
 
-// Endpoints that are accessible without a tenant identifier.
-const PUBLIC_PATHS = new Set(['/health', '/db/health'])
+// Endpoints accessible without a tenant identifier.
+// Auth routes are system-level (they establish the tenant context, not consume it).
+const PUBLIC_PATHS = new Set([
+  '/health',
+  '/db/health',
+  '/auth/login',
+  '/auth/refresh',
+  '/auth/logout',
+  '/auth/debug',
+])
 
 const tenantContextPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.decorateRequest('tenantId', null)
 
   fastify.addHook('onRequest', async (request, reply) => {
-    // Resolve tenant slug: prefer X-Tenant-Slug header.
-    // TODO (F3+): also parse slug from the Host subdomain (e.g. novacor.fantomvid.com).
+    // If the auth plugin already set tenantId from a valid Bearer token,
+    // trust that source and skip the X-Tenant-Slug header lookup entirely.
+    if (request.tenantId) return
+
+    const path = request.url.split('?')[0] ?? ''
+    if (PUBLIC_PATHS.has(path)) return
+
+    // Resolve tenant slug from header.
+    // TODO (F3+): also parse slug from Host subdomain (e.g. novacor.fantomvid.com).
     const slugHeader = request.headers['x-tenant-slug']
     const slug = Array.isArray(slugHeader) ? slugHeader[0] : slugHeader
 
     if (!slug) {
-      // No tenant identifier — allow only public endpoints.
-      const path = request.url.split('?')[0] ?? ''
-      if (!PUBLIC_PATHS.has(path)) {
-        return reply.code(401).send({ error: 'X-Tenant-Slug header is required' })
-      }
-      return
+      return reply.code(401).send({ error: 'X-Tenant-Slug header is required' })
     }
 
-    // Look up the tenant by slug. The app DB user (owner) bypasses RLS for this
-    // system-level lookup. Once we have the ID, per-query RLS applies via
-    // set_config('app.current_tenant_id', ...) inside route-handler transactions.
+    // System-level lookup: the app DB user runs this as the owner role, which
+    // bypasses RLS. This is intentional — we need to resolve the slug before
+    // tenant context can be established.
     const rows = await db
       .select({ id: tenants.id })
       .from(tenants)
