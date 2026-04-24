@@ -1,3 +1,5 @@
+'use client'
+
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 const ACCESS_TOKEN_KEY = 'fantom_access_token'
@@ -14,11 +16,14 @@ export function getRefreshToken(): string | null {
 }
 
 export function setTokens(accessToken: string, refreshToken: string): void {
+  if (typeof window === 'undefined') return
   localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
   localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+  console.log('[auth] stored tokens — access key:', ACCESS_TOKEN_KEY, 'refresh key:', REFRESH_TOKEN_KEY)
 }
 
 export function clearTokens(): void {
+  if (typeof window === 'undefined') return
   localStorage.removeItem(ACCESS_TOKEN_KEY)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
