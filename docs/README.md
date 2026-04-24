@@ -52,7 +52,7 @@ pnpm --filter @fantom/db db:seed
 
 ```bash
 # Build shared packages first, then start apps
-pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build
+pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build
 pnpm dev
 ```
 
@@ -80,7 +80,9 @@ fantom/
     ├── config/   # Shared TS/ESLint/Prettier configs
     ├── db/       # Drizzle schema, migrations, singleton client
     ├── shared/   # Shared TypeScript types
-    └── ui/       # @fantom/ui — React component library
+    ├── storage/  # @fantom/storage — Cloudflare R2 client
+    ├── ui/       # @fantom/ui — React component library
+    └── voice/    # @fantom/voice — ElevenLabs client
 ```
 
 ## Common Commands

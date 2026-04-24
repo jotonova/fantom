@@ -16,6 +16,8 @@
   "dependencies": {
     "@fantom/db": "workspace:*",
     "@fantom/shared": "workspace:*",
+    "@fantom/storage": "workspace:*",
+    "@fantom/voice": "workspace:*",
     "@fastify/cors": "^9.0.0",
     "@fastify/jwt": "^8.0.0",
     "@fastify/rate-limit": "^9.0.0",

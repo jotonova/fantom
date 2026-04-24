@@ -311,6 +311,66 @@ For any commit that doesn't change apps/web or packages/shared but should still 
 
 ---
 
+---
+
+## Decision #006 — F5 Storage, Voice, and Upload Architecture
+
+**Date:** 2026-04-24
+**Status:** Adopted
+**Context:** F5 introduces file storage (R2) and voice synthesis (ElevenLabs). Four choices were made.
+
+### Choice A: Cloudflare R2 over AWS S3
+
+**Decision:** Use Cloudflare R2 as the primary object store.
+
+**Reasoning:**
+- **Zero egress fees** — Fantom will serve video and audio files directly from R2. At S3 standard egress rates (~$0.09/GB), a video platform's bandwidth costs compound quickly. R2's zero-egress model is critical.
+- **S3-compatible API** — R2 accepts `@aws-sdk/client-s3` with a custom endpoint. No proprietary SDK to learn; swapping back to S3 is one endpoint change.
+- **Generous free tier** — 10 GB storage, 1 million Class-A ops/month, 10 million Class-B ops/month. Sufficient for F5 traffic with zero cost.
+
+**Consequences:**
+- Each env uses its own bucket. Key path convention `<tenantSlug>/<kind>/<YYYY>/<MM>/<uuid>-<filename>` ensures per-tenant isolation without separate buckets.
+- Public access must be enabled per bucket in Cloudflare dashboard (Settings → Public Access).
+- CORS policy must be configured on the bucket (see DEPLOYMENT.md) to allow browser PUT requests from fantomvid.com.
+
+### Choice B: Presigned PUT URLs (client-direct upload)
+
+**Decision:** API issues a presigned URL; browser PUT-uploads directly to R2; API registers the asset afterward.
+
+**Reasoning:**
+- Render free tier has limited bandwidth (~100 GB/month outbound). Routing file uploads through the API would exhaust this quickly for a video platform.
+- Presigned PUT offloads the upload bandwidth to Cloudflare's infrastructure entirely.
+- API remains stateless for uploads — no streaming proxy, no multipart state.
+- The client calls `POST /assets/upload-url` → gets `{uploadUrl, key}` → PUTs to R2 → calls `POST /assets` to register. This 3-step flow is explicit and auditable.
+
+**Key validation:** The registration endpoint (`POST /assets`) verifies that the supplied key starts with the authenticated user's tenant slug, preventing cross-tenant key injection attacks.
+
+### Choice C: Per-Tenant Key Prefixes
+
+**Decision:** All R2 keys are prefixed with the tenant slug: `<slug>/<kind>/<yyyy>/<mm>/<uuid>-<file>`.
+
+**Reasoning:**
+- **Collision avoidance**: UUIDs make collisions astronomically unlikely, but the tenant prefix makes the layout navigable for debugging and audit.
+- **Future migration path**: If we ever shard tenants across buckets or add per-tenant lifecycle rules, the prefix structure makes bucket-level policies trivially enforceable.
+- **Spoofing prevention**: The API validates that the registered key matches the authenticated tenant's slug, preventing a user from registering another tenant's file as their own.
+
+### Choice D: ElevenLabs over Alternatives
+
+**Decision:** ElevenLabs as the voice synthesis and cloning provider.
+
+**Reasoning:**
+- **Voice quality**: ElevenLabs is the current market leader for natural-sounding synthesis, especially for real estate narration (warm, professional tone).
+- **Simple REST API**: No proprietary SDK required; fetch-based client is ~100 lines.
+- **Instant Voice Cloning (IVC)**: Single audio file → usable voice clone in seconds. Competing services (Eleven's alternatives: Resemble.AI, PlayHT) have longer processing times or lower quality at comparable price points.
+- **Creator plan limits**: 100k characters/month synthesis credit is sufficient for F5 testing and early real estate video generation.
+
+**Consequences:**
+- If ElevenLabs pricing changes significantly, the `@fantom/voice` package abstracts the provider — swapping to OpenAI TTS requires updating that one file.
+- Synthesized audio is uploaded to R2 as an asset record, making it reusable across jobs without re-synthesizing.
+- Custom voice clones (IVC) count against the account's voice slot quota. The delete endpoint calls ElevenLabs to free the slot when a cloned voice is removed.
+
+---
+
 ### ⚠️ MANDATORY ROTATION TRIGGER
 
 > **Before any external user (non-Justin, non-Amy) is added to Fantom, the following MUST happen:**

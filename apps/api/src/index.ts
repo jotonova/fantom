@@ -10,6 +10,8 @@ import authPlugin from './plugins/auth.js'
 import tenantContextPlugin from './plugins/tenant-context.js'
 import authRoutes from './routes/auth.js'
 import tenantRoutes from './routes/tenants.js'
+import assetRoutes from './routes/assets.js'
+import voiceRoutes from './routes/voices.js'
 
 // Fail fast in production if JWT_SECRET is not set.
 if (process.env['NODE_ENV'] === 'production' && !process.env['JWT_SECRET']) {
@@ -62,6 +64,8 @@ await server.register(tenantContextPlugin)
 
 await server.register(authRoutes)
 await server.register(tenantRoutes)
+await server.register(assetRoutes)
+await server.register(voiceRoutes)
 
 // ── Health endpoints ──────────────────────────────────────────────────────────
 

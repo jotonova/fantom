@@ -13,7 +13,9 @@ fantom/
     ├── config/   # Shared TypeScript, ESLint, Prettier configs
     ├── db/       # Drizzle schema, migrations, and singleton client (@fantom/db)
     ├── shared/   # Shared TypeScript types (HealthResponse, etc.)
-    └── ui/       # @fantom/ui — React component library (Radix UI + Tailwind)
+    ├── storage/  # @fantom/storage — Cloudflare R2 client (S3-compatible)
+    ├── ui/       # @fantom/ui — React component library (Radix UI + Tailwind)
+    └── voice/    # @fantom/voice — ElevenLabs client (synthesis + cloning)
 ```
 
 ### Frontend Structure (apps/web)
@@ -45,6 +47,8 @@ apps/web/
 | UI library  | @fantom/ui (Radix UI)   | WAI-ARIA primitives + Tailwind tokens, shared across apps  |
 | Styling     | Tailwind CSS v3         | Utility-first, zero-runtime, consistent design tokens      |
 | Auth state  | React context           | Client-side AuthProvider + useAuth(); tokens in localStorage|
+| Object store| Cloudflare R2           | Zero egress fees — critical for video/audio delivery       |
+| Voice AI    | ElevenLabs              | Best-in-class synthesis + instant voice cloning            |
 | Backend     | Fastify 4               | High-throughput, TypeScript-native, schema validation      |
 | Database    | PostgreSQL (Render)     | ACID-compliant, relational, RLS for tenant isolation       |
 | ORM         | Drizzle ORM             | TypeScript-native, plain-SQL migrations, Postgres RLS-aware|
@@ -104,6 +108,37 @@ POST /auth/refresh { refreshToken }
   ├── Revoke old session (set revoked_at)
   ├── Insert new session with new token pair
   └── Response: { accessToken, refreshToken }  ← rotated pair
+```
+
+## Asset Upload Flow (F5)
+
+```
+Browser
+  │
+  │  1. POST /assets/upload-url  {filename, mimeType, kind}
+  ▼
+Fastify API (Render)
+  │  - Validates MIME type + kind
+  │  - Looks up tenant slug
+  │  - Calls generateUploadUrl() → S3 PutObjectCommand presigned URL
+  │  - Returns {uploadUrl, key, expiresAt}
+  │
+  │  2. Browser PUTs file directly to R2
+  ▼
+Cloudflare R2 (fantom-assets bucket)
+  │  - Receives raw file via presigned PUT
+  │  - No bandwidth through Render
+  │
+  │  3. POST /assets  {key, filename, kind, mimeType, sizeBytes}
+  ▼
+Fastify API (Render)
+  │  - Validates key starts with tenant slug (anti-spoofing)
+  │  - Calls getObjectMetadata() to verify file landed in R2
+  │  - Inserts into assets table (tenant-scoped via RLS)
+  │  - Returns asset record + publicUrl
+  │
+  ▼
+Browser renders the asset from publicUrl (direct R2 CDN — no API proxy)
 ```
 
 ## Shared Types

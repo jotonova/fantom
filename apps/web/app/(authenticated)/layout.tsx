@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { useAuth } from '../../src/lib/auth-store'
 import { Logo } from '@fantom/ui'
 import { Avatar } from '@fantom/ui'
@@ -17,11 +17,14 @@ import {
 
 const NAV_ITEMS = [
   { label: 'Dashboard', href: '/dashboard' },
+  { label: 'Library', href: '/library' },
+  { label: 'Voices', href: '/voices' },
 ]
 
 export default function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
   const { user, tenant, isAuthenticated, isLoading, logout } = useAuth()
   const router = useRouter()
+  const pathname = usePathname()
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -65,15 +68,23 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
 
         {/* Nav */}
         <nav className="flex-1 space-y-0.5 px-2 py-2" aria-label="Main navigation">
-          {NAV_ITEMS.map((item) => (
-            <a
-              key={item.href}
-              href={item.href}
-              className="flex items-center rounded-[6px] px-3 py-2 text-sm text-fantom-text-muted transition-colors hover:bg-fantom-steel hover:text-fantom-text aria-[current=page]:bg-fantom-steel aria-[current=page]:text-fantom-text"
-            >
-              {item.label}
-            </a>
-          ))}
+          {NAV_ITEMS.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(item.href + '/')
+            return (
+              <a
+                key={item.href}
+                href={item.href}
+                aria-current={active ? 'page' : undefined}
+                className={`flex items-center rounded-[6px] px-3 py-2 text-sm transition-colors ${
+                  active
+                    ? 'bg-fantom-steel text-fantom-text'
+                    : 'text-fantom-text-muted hover:bg-fantom-steel hover:text-fantom-text'
+                }`}
+              >
+                {item.label}
+              </a>
+            )
+          })}
         </nav>
       </aside>
 

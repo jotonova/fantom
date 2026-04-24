@@ -29,7 +29,7 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
    | Field            | Value                        |
    |------------------|------------------------------|
    | Root Directory   | *(blank — repo root)*        |
-   | Build Command    | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/api build` |
+   | Build Command    | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/api build` |
    | Start Command    | `node apps/api/dist/index.js` |
    | Runtime          | Node 20                      |
 
@@ -92,15 +92,21 @@ The seed is idempotent — running it multiple times is safe.
 
 ## Environment Summary
 
-| Service | Env Var                | Source                                                          |
-|---------|------------------------|-----------------------------------------------------------------|
-| API     | `DATABASE_URL`         | Render PostgreSQL internal URL (app_user after role hardening)  |
-| API     | `MIGRATE_DATABASE_URL` | Render PostgreSQL internal URL (owner role — for migrations)    |
-| API     | `JWT_SECRET`           | `openssl rand -base64 64`                                       |
-| API     | `REDIS_URL`            | Render Redis internal URL                                       |
-| API     | `PORT`                 | `3001`                                                          |
-| API     | `WEB_URLS`             | Vercel deployment URL(s)                                        |
-| Web     | `NEXT_PUBLIC_API_URL`  | Render API service URL                                          |
+| Service | Env Var                  | Source                                                          |
+|---------|--------------------------|-----------------------------------------------------------------|
+| API     | `DATABASE_URL`           | Render PostgreSQL internal URL (app_user after role hardening)  |
+| API     | `MIGRATE_DATABASE_URL`   | Render PostgreSQL internal URL (owner role — for migrations)    |
+| API     | `JWT_SECRET`             | `openssl rand -base64 64`                                       |
+| API     | `REDIS_URL`              | Render Redis internal URL                                       |
+| API     | `PORT`                   | `3001`                                                          |
+| API     | `WEB_URLS`               | Vercel deployment URL(s)                                        |
+| API     | `R2_ACCOUNT_ID`          | Cloudflare account ID (from dashboard URL)                      |
+| API     | `R2_ACCESS_KEY_ID`       | R2 API token access key                                         |
+| API     | `R2_SECRET_ACCESS_KEY`   | R2 API token secret                                             |
+| API     | `R2_BUCKET_NAME`         | `fantom-assets`                                                 |
+| API     | `R2_PUBLIC_URL`          | `https://pub-xxxxx.r2.dev` (from bucket Public Access tab)     |
+| API     | `ELEVENLABS_API_KEY`     | ElevenLabs → Profile → API Keys                                 |
+| Web     | `NEXT_PUBLIC_API_URL`    | Render API service URL                                          |
 
 ---
 
@@ -145,6 +151,70 @@ DATABASE_URL="postgres://owner:password@<external-render-host>/<dbname>" pnpm --
 
 > Use the owner-role URL for the seed (it needs to INSERT without RLS restrictions).
 > The seed is idempotent — safe to re-run.
+
+---
+
+---
+
+## Cloudflare R2 Setup (F5)
+
+### Step 1 — Create the bucket
+
+1. Log in to [Cloudflare dashboard](https://dash.cloudflare.com) → **R2** (left nav).
+2. Click **Create bucket** → name: `fantom-assets` → Create.
+
+### Step 2 — Enable public access
+
+1. Open the `fantom-assets` bucket → **Settings** tab.
+2. Under **Public access**, click **Allow Access**.
+3. Copy the `pub-xxxxx.r2.dev` URL — this is `R2_PUBLIC_URL`.
+
+### Step 3 — Create API token
+
+1. In R2 overview → **Manage API Tokens** → **Create API Token**.
+2. Permissions: **Object Read & Write** scoped to `fantom-assets`.
+3. Copy the **Access Key ID** (`R2_ACCESS_KEY_ID`) and **Secret Access Key** (`R2_SECRET_ACCESS_KEY`).
+4. Your Cloudflare account ID appears in the dashboard URL: `https://dash.cloudflare.com/<ACCOUNT_ID>/r2`. Copy it as `R2_ACCOUNT_ID`.
+
+### Step 4 — Configure CORS on the bucket
+
+Browser clients PUT directly to R2 via presigned URLs. Without CORS, the browser blocks the request.
+
+In the Cloudflare dashboard: **R2 → fantom-assets → Settings → CORS Policy** → paste:
+
+```json
+[
+  {
+    "AllowedOrigins": [
+      "https://fantomvid.com",
+      "https://www.fantomvid.com",
+      "https://fantom-six.vercel.app",
+      "http://localhost:3000"
+    ],
+    "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+> Add any additional Vercel preview URLs to `AllowedOrigins` as needed.
+
+### Step 5 — Add env vars to Render
+
+In **Render → API service → Environment**, add:
+
+| Key | Value |
+|-----|-------|
+| `R2_ACCOUNT_ID` | Your Cloudflare account ID |
+| `R2_ACCESS_KEY_ID` | From Step 3 |
+| `R2_SECRET_ACCESS_KEY` | From Step 3 |
+| `R2_BUCKET_NAME` | `fantom-assets` |
+| `R2_PUBLIC_URL` | `https://pub-xxxxx.r2.dev` from Step 2 |
+| `ELEVENLABS_API_KEY` | From elevenlabs.io → Profile → API Keys |
+
+Trigger a manual redeploy after adding the vars.
 
 ---
 
