@@ -28,10 +28,12 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
 
    | Field            | Value                        |
    |------------------|------------------------------|
-   | Root Directory   | `apps/api`                   |
-   | Build Command    | `pnpm install && pnpm build` |
-   | Start Command    | `node dist/index.js`         |
+   | Root Directory   | *(blank — repo root)*        |
+   | Build Command    | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/api build` |
+   | Start Command    | `node apps/api/dist/index.js` |
    | Runtime          | Node 20                      |
+
+   > **Important (F2 change):** The Root Directory must be blank (repo root) so pnpm can resolve and build workspace packages (`@fantom/shared`, `@fantom/db`) before building the API. If Root Directory was previously set to `apps/api`, update it in Render's Settings → Build & Deploy.
 
 4. Add environment variables:
 
