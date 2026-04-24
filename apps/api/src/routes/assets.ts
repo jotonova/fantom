@@ -58,12 +58,12 @@ function withPublicUrl(asset: Asset): Asset & { publicUrl: string } {
 }
 
 async function getTenantSlug(tenantId: string): Promise<string | null> {
-  // System-level slug lookup (bypasses RLS intentionally — we only read the slug).
-  const [row] = await db
-    .select({ slug: tenants.slug })
-    .from(tenants)
-    .where(eq(tenants.id, tenantId))
-    .limit(1)
+  // Set the GUC before querying — app_user has NOBYPASSRLS, so the tenants
+  // table policy blocks reads when app.current_tenant_id is unset.
+  const [row] = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    return tx.select({ slug: tenants.slug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1)
+  })
   return row?.slug ?? null
 }
 
