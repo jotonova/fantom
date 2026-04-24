@@ -1,14 +1,11 @@
 import 'dotenv/config'
+import { db, pool } from '@fantom/db'
+import { sql } from 'drizzle-orm'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
-import pg from 'pg'
 import type { HealthResponse, DbHealthResponse } from '@fantom/shared'
-
-const { Pool } = pg
-
-const pool = new Pool({
-  connectionString: process.env['DATABASE_URL'],
-})
+import tenantContextPlugin from './plugins/tenant-context.js'
+import tenantRoutes from './routes/tenants.js'
 
 const server = Fastify({ logger: true })
 
@@ -27,11 +24,13 @@ if (process.env['NODE_ENV'] !== 'production') {
 
 await server.register(cors, {
   origin: (origin, callback) => {
-    // Allow server-to-server requests and curl (no Origin header).
     if (!origin || allowedOrigins.has(origin)) return callback(null, true)
     callback(new Error(`CORS: origin ${origin} not allowed`), false)
   },
 })
+
+await server.register(tenantContextPlugin)
+await server.register(tenantRoutes)
 
 server.get<{ Reply: HealthResponse }>('/health', async (_request, reply) => {
   return reply.send({
@@ -41,42 +40,50 @@ server.get<{ Reply: HealthResponse }>('/health', async (_request, reply) => {
   })
 })
 
-server.get<{ Reply: DbHealthResponse }>('/db/health', async (_request, reply) => {
-  const start = Date.now()
-  let connected = false
-  let latencyMs = 0
+server.get<{ Reply: DbHealthResponse & { migrationsApplied: number } }>(
+  '/db/health',
+  async (_request, reply) => {
+    const start = Date.now()
+    let connected = false
+    let latencyMs = 0
+    let migrationsApplied = 0
 
-  try {
-    await pool.query('SELECT 1')
-    connected = true
-    latencyMs = Date.now() - start
-  } catch (err) {
-    server.log.error(err, 'DB health check failed')
-    latencyMs = Date.now() - start
-  }
+    try {
+      await db.execute(sql`SELECT 1`)
+      connected = true
+      latencyMs = Date.now() - start
+    } catch (err) {
+      server.log.error(err, 'DB health check failed')
+      latencyMs = Date.now() - start
+    }
 
-  return reply.send({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    version: '0.1.0',
-    db: {
-      connected,
-      latencyMs,
-    },
-  })
-})
+    if (connected) {
+      try {
+        // drizzle-kit stores migration history in drizzle.__drizzle_migrations
+        const result = await db.execute(
+          sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
+        )
+        const row = result.rows[0]
+        if (row && typeof row['count'] === 'number') {
+          migrationsApplied = row['count']
+        }
+      } catch {
+        // Table doesn't exist yet — migrations have not been run
+        migrationsApplied = 0
+      }
+    }
+
+    return reply.send({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      version: '0.1.0',
+      db: { connected, latencyMs },
+      migrationsApplied,
+    })
+  },
+)
 
 const port = Number(process.env['PORT'] ?? 3001)
-
-const start = async () => {
-  try {
-    await server.listen({ port, host: '0.0.0.0' })
-    server.log.info(`Server listening on port ${port}`)
-  } catch (err) {
-    server.log.error(err)
-    process.exit(1)
-  }
-}
 
 process.on('SIGTERM', async () => {
   server.log.info('SIGTERM received — shutting down gracefully')
@@ -85,4 +92,10 @@ process.on('SIGTERM', async () => {
   process.exit(0)
 })
 
-await start()
+try {
+  await server.listen({ port, host: '0.0.0.0' })
+  server.log.info(`Server listening on port ${port}`)
+} catch (err) {
+  server.log.error(err)
+  process.exit(1)
+}

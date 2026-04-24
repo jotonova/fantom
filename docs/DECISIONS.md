@@ -144,3 +144,59 @@ For any commit that doesn't change apps/web or packages/shared but should still 
 2. UNCHECK "Use existing Build Cache"
 3. UNCHECK "Use project's Ignore Build Step"
 4. Confirm
+
+---
+
+## Decision #003 — Drizzle ORM, RLS-at-Row-Level, Slug-Based Tenant Resolution
+
+**Date:** 2026-04-23
+**Status:** Adopted
+**Context:** F2 introduces the multi-tenancy schema and the migration system. Three foundational choices were made.
+
+### Choice A: Drizzle ORM + drizzle-kit
+
+**Options considered:** Drizzle ORM, Prisma, raw SQL with node-postgres, Kysely.
+
+**Decision:** Drizzle ORM with drizzle-kit for migration management.
+
+**Reasoning:**
+- **TypeScript-native schema:** Schema is written in TypeScript (`packages/db/src/schema/`). No separate `.prisma` DSL to learn; schema types flow directly into application code.
+- **Plain-SQL migrations:** `drizzle-kit generate` produces readable `.sql` files committed to the repo. Every migration is reviewable, diffable, and executable by hand if needed. Prisma's migrate generates opaque migration manifests.
+- **Lightweight runtime:** Drizzle is a thin query builder on top of node-postgres. No shadow database, no separate migration daemon, no background processes.
+- **RLS-friendly:** Drizzle doesn't abstract away the transaction layer — calling `set_config(...)` inside `db.transaction()` is natural and explicit.
+
+**Consequences:**
+- Migrations are generated (not written by hand), but the output is plain SQL — always reviewable before applying.
+- Schema changes require running `pnpm --filter @fantom/db db:generate` locally and committing the generated file.
+
+### Choice B: RLS Enforced at the Database Layer
+
+**Options considered:** Application-level tenant filtering (WHERE tenant_id = ?), middleware enforcement only, database-level RLS.
+
+**Decision:** Database-level RLS with a session GUC (`app.current_tenant_id`).
+
+**Reasoning:**
+- Application-level filtering is only as trustworthy as the application code. A missed `WHERE` clause leaks cross-tenant data.
+- RLS policies live in the database and apply to every query regardless of which code path triggered it. A future developer adding a new route can't accidentally skip tenant isolation.
+- PostgreSQL's `set_config(name, value, is_local := true)` sets the GUC for the duration of a single transaction, eliminating the risk of the tenant context leaking between requests via connection pool reuse.
+
+**F2 limitation:** The app currently connects as the Render Postgres owner role, which bypasses RLS by default. The policies are in place and `set_config` is called correctly — enforcement becomes genuine once a non-BYPASSRLS `app_user` role is provisioned in F3.
+
+**Consequences:**
+- All tenant-scoped route handlers must wrap queries in a `db.transaction()` block that calls `set_config`.
+- The initial system-level slug-to-ID lookup (in the tenant-context plugin) runs as the owner and therefore bypasses RLS — this is intentional and safe: it's a system operation, not a user query.
+
+### Choice C: Slug-Based Tenant Resolution
+
+**Options considered:** Numeric ID in header, UUID in header, slug in header, subdomain parsing.
+
+**Decision:** Slug-based resolution via `X-Tenant-Slug` header (e.g. `novacor`), with a subdomain stub for F3.
+
+**Reasoning:**
+- Slugs are human-readable, debuggable in logs, and stable across environments. UUIDs work but make curl-based debugging painful.
+- The `X-Tenant-Slug` header is explicit and visible — no magic path or subdomain parsing required in F2.
+- The subdomain path (`novacor.fantomvid.com → slug = "novacor"`) is the long-term UX goal. A stub is left in `tenant-context.ts` so the F3 implementation has a clear insertion point.
+
+**Consequences:**
+- Web clients must include `X-Tenant-Slug` on every API request (or the API returns 401).
+- Slugs must be globally unique across all tenants (enforced by `UNIQUE` constraint on `tenants.slug`).

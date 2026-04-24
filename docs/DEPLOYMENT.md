@@ -45,14 +45,20 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
 
    > **Note:** `WEB_URL` (single origin) is still supported as a fallback but deprecated — prefer `WEB_URLS`.
 
-5. Deploy.
+5. **Add a Pre-Deploy Command** (Settings → Deploy → Pre-Deploy Command):
+   ```
+   pnpm --filter @fantom/db db:migrate
+   ```
+   This runs Drizzle migrations against the Render Postgres database before each new deploy. Migrations are idempotent — already-applied migrations are skipped automatically.
+
+6. Deploy.
 
 ---
 
 ## Database → Render PostgreSQL
 
 1. In Render, click **New → PostgreSQL**.
-2. Choose a name (e.g., `fantom-db`) and the free plan for F1.
+2. Choose a name (e.g., `fantom-db`) and the free plan for F1/F2.
 3. After creation, copy the **Internal Database URL**.
 4. Paste it as the `DATABASE_URL` environment variable in the API web service.
 
@@ -61,9 +67,24 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
 ## Redis → Render Redis
 
 1. In Render, click **New → Redis**.
-2. Choose a name (e.g., `fantom-redis`) and the free plan for F1.
+2. Choose a name (e.g., `fantom-redis`) and the free plan for F1/F2.
 3. After creation, copy the **Internal Redis URL**.
 4. Paste it as the `REDIS_URL` environment variable in the API web service.
+
+---
+
+## Seeding Production (One-Time, After F2 Deploy)
+
+The Novacor tenant must be seeded manually once after the first successful migration. **Run the seed locally with the production DATABASE_URL** — this is safer than a Render Job because you can inspect output and re-run if needed without touching Render's dashboard.
+
+```bash
+# From repo root — set DATABASE_URL to the External Database URL from Render
+DATABASE_URL="postgres://..." pnpm --filter @fantom/db db:seed
+```
+
+> Use the **External** Database URL (not internal) when connecting from your local machine. Find it in the Render PostgreSQL dashboard → "Connections".
+
+The seed is idempotent — running it multiple times is safe.
 
 ---
 
@@ -74,7 +95,7 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
 | API     | `DATABASE_URL`        | Render PostgreSQL internal URL |
 | API     | `REDIS_URL`           | Render Redis internal URL      |
 | API     | `PORT`                | `3001`                         |
-| API     | `WEB_URL`             | Vercel deployment URL          |
+| API     | `WEB_URLS`            | Vercel deployment URL(s)       |
 | Web     | `NEXT_PUBLIC_API_URL` | Render API service URL         |
 
 ---
