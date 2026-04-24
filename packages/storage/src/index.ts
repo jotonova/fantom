@@ -11,9 +11,21 @@ function env(key: string): string {
   return process.env[key] ?? ''
 }
 
+// Normalize R2_ACCOUNT_ID to just the 32-char hex regardless of what the user
+// pastes in. Cloudflare's dashboard shows the full hostname in several places,
+// so it's easy to accidentally copy "abc123.r2.cloudflarestorage.com" instead
+// of just "abc123". Strip any protocol prefix and any trailing domain suffix.
+function r2AccountId(): string {
+  return env('R2_ACCOUNT_ID')
+    .replace(/^https?:\/\//, '')
+    .replace(/\.r2\.cloudflarestorage\.com\/?$/, '')
+    .trim()
+}
+
 export const r2 = new S3Client({
   region: 'auto',
-  endpoint: `https://${env('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com`,
+  endpoint: `https://${r2AccountId()}.r2.cloudflarestorage.com`,
+  forcePathStyle: false, // virtual-hosted style: <bucket>.<account>.r2.cloudflarestorage.com
   credentials: {
     accessKeyId: env('R2_ACCESS_KEY_ID'),
     secretAccessKey: env('R2_SECRET_ACCESS_KEY'),
