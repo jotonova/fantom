@@ -22,7 +22,9 @@ const PUBLIC_PATHS = new Set([
 ])
 
 const tenantContextPlugin: FastifyPluginAsync = async (fastify) => {
-  fastify.decorateRequest('tenantId', null)
+  if (!fastify.hasRequestDecorator('tenantId')) {
+    fastify.decorateRequest('tenantId', null)
+  }
 
   fastify.addHook('onRequest', async (request, reply) => {
     // If the auth plugin already set tenantId from a valid Bearer token,

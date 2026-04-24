@@ -10,8 +10,11 @@ declare module '@fastify/jwt' {
 }
 
 const authPlugin: FastifyPluginAsync = async (fastify) => {
-  // null is the unauthenticated sentinel; set as initial decorator value.
-  fastify.decorateRequest('user', null)
+  // @fastify/jwt may have already decorated request.user — guard against the
+  // "decorator already added" crash that fires when both plugins are loaded.
+  if (!fastify.hasRequestDecorator('user')) {
+    fastify.decorateRequest('user', null)
+  }
 
   fastify.addHook('onRequest', async (request) => {
     const authHeader = request.headers['authorization']
