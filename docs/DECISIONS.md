@@ -704,3 +704,35 @@ Render Background Workers have no HTTP listener. A minimal `node:http` server on
 The tenant-facing `/events` endpoint and its RLS policy filter to `severity IN ('debug', 'info', 'warn')`. Error and critical events are visible to platform admins only. This prevents leaking potentially sensitive error details (stack traces, internal IDs) through the tenant API.
 
 ---
+
+## ADR-012: RLS GUC Testing Protocol
+
+**Status:** Accepted
+**Date:** 2026-04-25
+
+### Context
+
+This is the second time Row-Level Security has blocked a feature ship mid-deploy. F7 hit an RLS error on the `tenants` table; F9 hit one on the `events` table. In the F9 case, the INSERT policy was nominally `WITH CHECK (true)` (unconditional allow), yet the insert still raised 42501 in production. The root cause: system-level events (`tenant_id IS NULL`) where no `app.current_tenant_id` GUC was set before the insert — a path that was never exercised in local development.
+
+### Decision
+
+1. **No `WITH CHECK (true)` on production tables.** Replace with an explicit condition that documents the intended access pattern. For the events table:
+   ```sql
+   WITH CHECK (
+     tenant_id IS NULL
+     OR tenant_id::text = current_setting('app.current_tenant_id', true)
+   )
+   ```
+   This makes both the null-tenant (system event) and tenant-scoped paths auditable by reading the policy definition.
+
+2. **All `@fantom/db` writes run inside a transaction with the GUC pre-set.** In `observability/src/logger.ts`, both the tenant-scoped branch and the null-tenant branch wrap the insert in a transaction that calls `set_config('app.current_tenant_id', tenantId ?? '', true)` before inserting. This guarantees `current_setting()` is never evaluated against a missing GUC.
+
+3. **New RLS policies ship with a smoke test path.** Any new table with RLS and an INSERT policy must be exercised from a non-owner connection (i.e. `app_user`) before the feature is considered shipped. The `/admin/alerts/test` endpoint is the canonical test path for the `events` table.
+
+### Consequences
+
+- INSERT policy on `events` is slightly more restrictive than `WITH CHECK (true)`: a tenant-scoped insert with the wrong GUC will now fail explicitly rather than silently succeeding with bad data. This is the desired behaviour.
+- All logger inserts are now transactional, adding one extra round-trip (`set_config` call) per event. At current write volume this is negligible.
+- Future tables must follow this pattern; `WITH CHECK (true)` is a red flag in code review.
+
+---

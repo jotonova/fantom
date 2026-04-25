@@ -63,9 +63,8 @@ async function _insert(params: LogEventParams): Promise<LogEventResult> {
   let inserted: (typeof events.$inferSelect) | undefined
 
   if (tenantId) {
-    // Tenant-scoped insert: set GUC so the INSERT RLS policy has context.
-    // The INSERT policy uses WITH CHECK (true) so the GUC is not strictly
-    // required for the insert itself, but it's consistent with the rest of the codebase.
+    // Tenant-scoped insert: set GUC so the INSERT RLS policy can validate
+    // tenant_id::text = current_setting('app.current_tenant_id', true).
     const [row] = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
       return tx.insert(events).values(values).returning()
@@ -73,8 +72,12 @@ async function _insert(params: LogEventParams): Promise<LogEventResult> {
     inserted = row
   } else {
     // System event with no tenant context (e.g. auth.login.failed before tenant resolves).
-    // The INSERT policy WITH CHECK (true) allows this.
-    const [row] = await db.insert(events).values(values).returning()
+    // The INSERT policy allows tenant_id IS NULL; set the GUC to empty string so
+    // the policy's current_setting() call never sees a missing-GUC error.
+    const [row] = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.current_tenant_id', '', true)`)
+      return tx.insert(events).values(values).returning()
+    })
     inserted = row
   }
 

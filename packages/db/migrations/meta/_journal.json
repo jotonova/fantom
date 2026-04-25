@@ -71,6 +71,13 @@
       "when": 1777500001000,
       "tag": "0009_observability",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777600000000,
+      "tag": "0010_fix_events_rls",
+      "breakpoints": true
     }
   ]
 }
