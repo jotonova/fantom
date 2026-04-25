@@ -1,23 +1,29 @@
 -- F8: Distribution layer — tracks where job output assets are sent after render.
 
-CREATE TYPE "destination_kind" AS ENUM (
-  'webhook',
-  'youtube',
-  'facebook',
-  'instagram',
-  'mls'
-);--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "destination_kind" AS ENUM (
+    'webhook',
+    'youtube',
+    'facebook',
+    'instagram',
+    'mls'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
 
-CREATE TYPE "distribution_status" AS ENUM (
-  'pending',
-  'queued',
-  'processing',
-  'completed',
-  'failed',
-  'cancelled'
-);--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "distribution_status" AS ENUM (
+    'pending',
+    'queued',
+    'processing',
+    'completed',
+    'failed',
+    'cancelled'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
 
-CREATE TABLE "distributions" (
+CREATE TABLE IF NOT EXISTS "distributions" (
   "id"                uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "tenant_id"         uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
   "job_id"            uuid NOT NULL REFERENCES "jobs"("id") ON DELETE CASCADE,
@@ -39,18 +45,19 @@ CREATE TABLE "distributions" (
   "updated_at"        timestamptz NOT NULL DEFAULT now()
 );--> statement-breakpoint
 
-CREATE INDEX "distributions_tenant_status_created_at_idx"
+CREATE INDEX IF NOT EXISTS "distributions_tenant_status_created_at_idx"
   ON "distributions" ("tenant_id", "status", "created_at" DESC);--> statement-breakpoint
 
-CREATE INDEX "distributions_job_idx"
+CREATE INDEX IF NOT EXISTS "distributions_job_idx"
   ON "distributions" ("job_id");--> statement-breakpoint
 
-CREATE INDEX "distributions_status_created_at_idx"
+CREATE INDEX IF NOT EXISTS "distributions_status_created_at_idx"
   ON "distributions" ("status", "created_at" DESC);--> statement-breakpoint
 
 -- RLS: tenant-scoped, same GUC pattern as every other tenant table.
 ALTER TABLE "distributions" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 
+DROP POLICY IF EXISTS "distributions_isolation" ON "distributions";--> statement-breakpoint
 CREATE POLICY "distributions_isolation" ON "distributions"
   AS PERMISSIVE
   FOR ALL

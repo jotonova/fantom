@@ -14,6 +14,7 @@
 -- The tenants table contains only public metadata (name, slug). All sensitive
 -- tenant-scoped data lives in other tables that retain full RLS isolation.
 
+DROP POLICY IF EXISTS "tenants_select_bootstrap" ON "tenants";--> statement-breakpoint
 CREATE POLICY "tenants_select_bootstrap" ON "tenants"
   AS PERMISSIVE
   FOR SELECT

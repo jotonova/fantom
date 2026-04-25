@@ -36,6 +36,7 @@ CREATE INDEX IF NOT EXISTS "sessions_token_hash_idx" ON "sessions"("token_hash")
 -- before tenant context is established (needed for the login endpoint to discover
 -- which tenants a user belongs to). The existing tenant_users_isolation policy
 -- handles all other access; this policy is additive (PERMISSIVE = OR logic).
+DROP POLICY IF EXISTS "tenant_users_own_memberships" ON "tenant_users";--> statement-breakpoint
 CREATE POLICY "tenant_users_own_memberships" ON "tenant_users"
   AS PERMISSIVE
   FOR SELECT

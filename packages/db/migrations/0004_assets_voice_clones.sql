@@ -6,14 +6,26 @@
 
 -- ── Enums ─────────────────────────────────────────────────────────────────────
 
-CREATE TYPE "asset_kind" AS ENUM ('image', 'audio', 'video', 'document', 'other');--> statement-breakpoint
-CREATE TYPE "voice_clone_provider" AS ENUM ('elevenlabs', 'openai', 'other');--> statement-breakpoint
-CREATE TYPE "voice_clone_default_kind" AS ENUM ('listing_video', 'market_update', 'virtual_tour', 'flip_video', 'general');--> statement-breakpoint
-CREATE TYPE "voice_clone_status" AS ENUM ('pending', 'processing', 'ready', 'failed');--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "asset_kind" AS ENUM ('image', 'audio', 'video', 'document', 'other');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "voice_clone_provider" AS ENUM ('elevenlabs', 'openai', 'other');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "voice_clone_default_kind" AS ENUM ('listing_video', 'market_update', 'virtual_tour', 'flip_video', 'general');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "voice_clone_status" AS ENUM ('pending', 'processing', 'ready', 'failed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
 
 -- ── assets ────────────────────────────────────────────────────────────────────
 
-CREATE TABLE "assets" (
+CREATE TABLE IF NOT EXISTS "assets" (
   "id"                   uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "tenant_id"            uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
   "uploaded_by_user_id"  uuid REFERENCES "users"("id") ON DELETE SET NULL,
@@ -31,19 +43,20 @@ CREATE TABLE "assets" (
   "updated_at"           timestamptz NOT NULL DEFAULT now()
 );--> statement-breakpoint
 
-CREATE INDEX "assets_tenant_kind_idx"       ON "assets" ("tenant_id", "kind");--> statement-breakpoint
-CREATE INDEX "assets_tenant_created_at_idx" ON "assets" ("tenant_id", "created_at" DESC);--> statement-breakpoint
-CREATE INDEX "assets_tags_gin_idx"          ON "assets" USING GIN ("tags");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "assets_tenant_kind_idx"       ON "assets" ("tenant_id", "kind");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "assets_tenant_created_at_idx" ON "assets" ("tenant_id", "created_at" DESC);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "assets_tags_gin_idx"          ON "assets" USING GIN ("tags");--> statement-breakpoint
 
 ALTER TABLE "assets" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 
+DROP POLICY IF EXISTS "assets_isolation" ON "assets";--> statement-breakpoint
 CREATE POLICY "assets_isolation" ON "assets"
   AS PERMISSIVE FOR ALL TO PUBLIC
   USING ("tenant_id"::text = current_setting('app.current_tenant_id', true));--> statement-breakpoint
 
 -- ── voice_clones ──────────────────────────────────────────────────────────────
 
-CREATE TABLE "voice_clones" (
+CREATE TABLE IF NOT EXISTS "voice_clones" (
   "id"                   uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "tenant_id"            uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
   "name"                 text NOT NULL,
@@ -58,16 +71,17 @@ CREATE TABLE "voice_clones" (
   "updated_at"           timestamptz NOT NULL DEFAULT now()
 );--> statement-breakpoint
 
-CREATE INDEX "voice_clones_tenant_idx" ON "voice_clones" ("tenant_id");--> statement-breakpoint
-CREATE INDEX "voice_clones_tenant_default_kind_idx" ON "voice_clones" ("tenant_id", "is_default_for_kind");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "voice_clones_tenant_idx" ON "voice_clones" ("tenant_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "voice_clones_tenant_default_kind_idx" ON "voice_clones" ("tenant_id", "is_default_for_kind");--> statement-breakpoint
 
 -- One default voice per kind per tenant (partial unique — NULL values are excluded).
-CREATE UNIQUE INDEX "voice_clones_default_kind_unique"
+CREATE UNIQUE INDEX IF NOT EXISTS "voice_clones_default_kind_unique"
   ON "voice_clones" ("tenant_id", "is_default_for_kind")
   WHERE "is_default_for_kind" IS NOT NULL;--> statement-breakpoint
 
 ALTER TABLE "voice_clones" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 
+DROP POLICY IF EXISTS "voice_clones_isolation" ON "voice_clones";--> statement-breakpoint
 CREATE POLICY "voice_clones_isolation" ON "voice_clones"
   AS PERMISSIVE FOR ALL TO PUBLIC
   USING ("tenant_id"::text = current_setting('app.current_tenant_id', true));--> statement-breakpoint

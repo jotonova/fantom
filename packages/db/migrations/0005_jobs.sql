@@ -4,27 +4,33 @@
 
 -- ── Enums ─────────────────────────────────────────────────────────────────────
 
-CREATE TYPE "job_kind" AS ENUM (
-  'render_test_video',
-  'render_listing_video',
-  'render_market_update',
-  'render_virtual_tour',
-  'render_flip_video',
-  'render_youtube_edit'
-);--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "job_kind" AS ENUM (
+    'render_test_video',
+    'render_listing_video',
+    'render_market_update',
+    'render_virtual_tour',
+    'render_flip_video',
+    'render_youtube_edit'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
 
-CREATE TYPE "job_status" AS ENUM (
-  'pending',
-  'queued',
-  'processing',
-  'completed',
-  'failed',
-  'cancelled'
-);--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "job_status" AS ENUM (
+    'pending',
+    'queued',
+    'processing',
+    'completed',
+    'failed',
+    'cancelled'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
 
 -- ── jobs ──────────────────────────────────────────────────────────────────────
 
-CREATE TABLE "jobs" (
+CREATE TABLE IF NOT EXISTS "jobs" (
   "id"                    uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "tenant_id"             uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
   "created_by_user_id"    uuid REFERENCES "users"("id") ON DELETE SET NULL,
@@ -44,15 +50,16 @@ CREATE TABLE "jobs" (
 );--> statement-breakpoint
 
 -- For the jobs list page (tenant-scoped, newest first, filterable by status)
-CREATE INDEX "jobs_tenant_status_created_at_idx"
+CREATE INDEX IF NOT EXISTS "jobs_tenant_status_created_at_idx"
   ON "jobs" ("tenant_id", "status", "created_at" DESC);--> statement-breakpoint
 
 -- For the worker pickup query (find next pending/queued job)
-CREATE INDEX "jobs_status_created_at_idx"
+CREATE INDEX IF NOT EXISTS "jobs_status_created_at_idx"
   ON "jobs" ("status", "created_at");--> statement-breakpoint
 
 ALTER TABLE "jobs" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 
+DROP POLICY IF EXISTS "jobs_isolation" ON "jobs";--> statement-breakpoint
 CREATE POLICY "jobs_isolation" ON "jobs"
   AS PERMISSIVE FOR ALL TO PUBLIC
   USING ("tenant_id"::text = current_setting('app.current_tenant_id', true));--> statement-breakpoint

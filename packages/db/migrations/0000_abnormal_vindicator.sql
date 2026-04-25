@@ -1,5 +1,11 @@
-CREATE TYPE "public"."tenant_status" AS ENUM('active', 'suspended', 'archived');--> statement-breakpoint
-CREATE TYPE "public"."tenant_user_role" AS ENUM('owner', 'editor', 'viewer');--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "public"."tenant_status" AS ENUM('active', 'suspended', 'archived');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "public"."tenant_user_role" AS ENUM('owner', 'editor', 'viewer');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "tenants" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" text NOT NULL,
