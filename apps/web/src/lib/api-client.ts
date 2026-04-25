@@ -19,7 +19,6 @@ export function setTokens(accessToken: string, refreshToken: string): void {
   if (typeof window === 'undefined') return
   localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
   localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
-  console.log('[auth] stored tokens — access key:', ACCESS_TOKEN_KEY, 'refresh key:', REFRESH_TOKEN_KEY)
 }
 
 export function clearTokens(): void {
@@ -92,6 +91,7 @@ export async function apiFetch<T>(
     } catch {
       // leave as plain text
     }
+    console.error(`[api] ${init.method ?? 'GET'} ${path} → ${res.status}: ${message}`)
     throw new ApiError(res.status, message)
   }
 

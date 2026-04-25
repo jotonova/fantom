@@ -52,6 +52,20 @@ await server.register(fastifyJwt, {
 
 await server.register(rateLimit, { global: false })
 
+// ── JSON body parser: treat empty body as {} ─────────────────────────────────
+// Fastify's default parser rejects Content-Type: application/json with no body
+// (FST_ERR_CTP_EMPTY_JSON_BODY). Actions like cancel/retry send no body but
+// still set Content-Type: application/json because api-client always adds it.
+
+server.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+  if (body === '') return done(null, {})
+  try {
+    done(null, JSON.parse(body as string))
+  } catch (err) {
+    done(err as Error, undefined)
+  }
+})
+
 // ── Plugins (order matters: auth → tenant-context → routes) ──────────────────
 
 // 1. Auth: parses Bearer token → sets request.user + request.tenantId from JWT.
