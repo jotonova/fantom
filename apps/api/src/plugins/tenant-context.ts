@@ -43,9 +43,10 @@ const tenantContextPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.code(401).send({ error: 'X-Tenant-Slug header is required' })
     }
 
-    // System-level lookup: the app DB user runs this as the owner role, which
-    // bypasses RLS. This is intentional — we need to resolve the slug before
-    // tenant context can be established.
+    // Bootstrap lookup by slug: migration 0006 adds a permissive SELECT-only
+    // policy on the tenants table so app_user can read any tenant row without
+    // app.current_tenant_id being set. Required here because we need the
+    // tenant's UUID before we can establish the GUC for full tenant context.
     const rows = await db
       .select({ id: tenants.id })
       .from(tenants)

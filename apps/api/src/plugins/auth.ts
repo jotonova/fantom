@@ -27,9 +27,12 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       // Auth token is the trusted source of tenant context — set it here so the
       // tenant-context plugin (which runs next) skips the X-Tenant-Slug lookup.
       request.tenantId = payload.tenantId
-    } catch {
+    } catch (err) {
       // Invalid or expired token — leave request.user as null. Routes that require
       // auth will reject via requireAuth(); public routes proceed normally.
+      // Log at warn level so JWT_SECRET mismatches are visible in production logs.
+      const msg = err instanceof Error ? err.message : String(err)
+      request.log.warn({ msg }, 'JWT verify failed — treating request as unauthenticated')
     }
   })
 }
