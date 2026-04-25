@@ -13,14 +13,25 @@ function getTodayKey(): string {
   return new Date().toISOString().slice(0, 10) // YYYY-MM-DD
 }
 
+export type AlertSkippedReason = 'not_configured' | 'daily_cap' | 'throttled' | 'send_failed'
+
+export interface AlertResult {
+  sent: boolean
+  skippedReason?: AlertSkippedReason
+}
+
 /**
  * Throttled alert sender. Checks:
  * 1. Global daily cap across all tenants (hard stop against runaway loops)
  * 2. Per-tenant per-kind 5-minute cooldown (skipped for 'critical' severity)
  *
- * If RESEND_API_KEY or ALERT_TO is not configured, logs a warning and returns.
+ * Returns an AlertResult describing whether the alert was sent and why it
+ * was skipped if not — callers can surface this for debugging.
+ *
+ * If RESEND_API_KEY or ALERT_TO is not configured, returns immediately with
+ * skippedReason: 'not_configured'.
  */
-export async function maybeAlert(event: Event): Promise<void> {
+export async function maybeAlert(event: Event): Promise<AlertResult> {
   const apiKey = process.env['RESEND_API_KEY']
   const fromEmail =
     process.env['ALERT_FROM'] ?? 'Fantom Alerts <alerts@fantomvid.com>'
@@ -36,7 +47,7 @@ export async function maybeAlert(event: Event): Promise<void> {
       '[observability] RESEND_API_KEY or ALERT_TO not configured — skipping alert for:',
       event.kind,
     )
-    return
+    return { sent: false, skippedReason: 'not_configured' }
   }
 
   const dayKey = getTodayKey()
@@ -54,11 +65,11 @@ export async function maybeAlert(event: Event): Promise<void> {
       console.log(
         `[observability] daily alert cap (${dailyLimit}) reached — skipping ${kind}`,
       )
-      return
+      return { sent: false, skippedReason: 'daily_cap' }
     }
   } catch (err) {
     console.error('[observability] daily cap check failed:', err)
-    return
+    return { sent: false, skippedReason: 'send_failed' }
   }
 
   // ── 2. Per-tenant per-kind 5-minute throttle (skipped for critical) ───────────
@@ -82,11 +93,11 @@ export async function maybeAlert(event: Event): Promise<void> {
         console.log(
           `[observability] throttled (5min): ${kind} for tenant ${tenantId}`,
         )
-        return
+        return { sent: false, skippedReason: 'throttled' }
       }
     } catch (err) {
       console.error('[observability] throttle check failed:', err)
-      return
+      return { sent: false, skippedReason: 'send_failed' }
     }
   }
 
@@ -141,7 +152,7 @@ ${Object.keys(meta).length > 0 ? `<h3 style="font-family:sans-serif;">Metadata</
 
     if (error) {
       console.error('[observability] Resend send error:', error)
-      return
+      return { sent: false, skippedReason: 'send_failed' }
     }
 
     // ── 5. Update throttle record ─────────────────────────────────────────────
@@ -166,7 +177,9 @@ ${Object.keys(meta).length > 0 ? `<h3 style="font-family:sans-serif;">Metadata</
     }
 
     console.log(`[observability] alert sent: ${subject}`)
+    return { sent: true }
   } catch (err) {
     console.error('[observability] alert send failed:', err)
+    return { sent: false, skippedReason: 'send_failed' }
   }
 }

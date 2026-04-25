@@ -229,6 +229,16 @@ export default function AdminPage() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Test alert state
+  const [testAlertRunning, setTestAlertRunning] = useState(false)
+  const [testAlertResult, setTestAlertResult] = useState<{
+    event_id: string
+    alert_attempted: boolean
+    alert_throttled: boolean
+    alert_skipped_reason: string | null
+  } | null>(null)
+  const [testAlertError, setTestAlertError] = useState<string | null>(null)
+
   const isPlatformAdmin = tenant?.role === 'platform_admin'
 
   const loadAll = useCallback(async () => {
@@ -264,6 +274,25 @@ export default function AdminPage() {
       if (refreshTimer.current) clearInterval(refreshTimer.current)
     }
   }, [authLoading, isPlatformAdmin, loadAll, router])
+
+  async function runTestAlert() {
+    setTestAlertRunning(true)
+    setTestAlertResult(null)
+    setTestAlertError(null)
+    try {
+      const result = await apiFetch<{
+        event_id: string
+        alert_attempted: boolean
+        alert_throttled: boolean
+        alert_skipped_reason: string | null
+      }>('/admin/alerts/test', { method: 'POST', body: JSON.stringify({}) })
+      setTestAlertResult(result)
+    } catch (err) {
+      setTestAlertError(err instanceof Error ? err.message : 'Request failed')
+    } finally {
+      setTestAlertRunning(false)
+    }
+  }
 
   if (authLoading || (!isPlatformAdmin && !loading)) {
     return (
@@ -339,7 +368,62 @@ export default function AdminPage() {
             </Card>
           </Section>
 
-          {/* 2. Live Metrics */}
+          {/* 2. Alert Pipeline Test */}
+          <Section title="Alert Pipeline" defaultOpen={false}>
+            <Card className="p-5 space-y-4">
+              <p className="text-sm text-fantom-text-muted">
+                Fires a <span className="font-mono text-xs text-fantom-text">test.synthetic_alert</span> event
+                through the real logEvent → maybeAlert pipeline. Use this to verify end-to-end
+                email delivery from Resend.
+              </p>
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void runTestAlert()}
+                  disabled={testAlertRunning}
+                >
+                  {testAlertRunning ? <Spinner size="sm" /> : 'Send Test Alert'}
+                </Button>
+                {testAlertResult && (
+                  <span className="text-xs text-fantom-text-muted font-mono">
+                    event {testAlertResult.event_id.slice(-8)}
+                  </span>
+                )}
+              </div>
+              {testAlertError && (
+                <p className="text-xs text-red-400 font-mono">{testAlertError}</p>
+              )}
+              {testAlertResult && (
+                <div className="rounded bg-fantom-steel p-3 space-y-1 text-xs font-mono">
+                  <div className="flex gap-3">
+                    <span className="text-fantom-text-muted w-36">alert_attempted</span>
+                    <span className={testAlertResult.alert_attempted ? 'text-green-400' : 'text-fantom-text-muted'}>
+                      {String(testAlertResult.alert_attempted)}
+                    </span>
+                  </div>
+                  <div className="flex gap-3">
+                    <span className="text-fantom-text-muted w-36">alert_throttled</span>
+                    <span className={testAlertResult.alert_throttled ? 'text-yellow-400' : 'text-fantom-text-muted'}>
+                      {String(testAlertResult.alert_throttled)}
+                    </span>
+                  </div>
+                  <div className="flex gap-3">
+                    <span className="text-fantom-text-muted w-36">skipped_reason</span>
+                    <span className={testAlertResult.alert_skipped_reason ? 'text-yellow-400' : 'text-green-400'}>
+                      {testAlertResult.alert_skipped_reason ?? 'none — email sent'}
+                    </span>
+                  </div>
+                  <div className="flex gap-3 pt-1 border-t border-fantom-steel-border">
+                    <span className="text-fantom-text-muted w-36">event_id</span>
+                    <span className="text-fantom-text break-all">{testAlertResult.event_id}</span>
+                  </div>
+                </div>
+              )}
+            </Card>
+          </Section>
+
+          {/* 3. Live Metrics */}
           <Section title="Live Metrics">
             {metrics && (
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -383,7 +467,7 @@ export default function AdminPage() {
             )}
           </Section>
 
-          {/* 3. Job kind breakdown */}
+          {/* 4. Job kind breakdown */}
           <Section title="Job Breakdown" defaultOpen={false}>
             {metrics && (
               <Card className="p-0 overflow-hidden">
@@ -415,7 +499,7 @@ export default function AdminPage() {
             )}
           </Section>
 
-          {/* 4. Cost Tracking */}
+          {/* 5. Cost Tracking */}
           <Section title="Cost Tracking" defaultOpen={false}>
             {metrics && (
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -445,7 +529,7 @@ export default function AdminPage() {
             )}
           </Section>
 
-          {/* 5. Recent Errors */}
+          {/* 6. Recent Errors */}
           <Section title="Recent Errors">
             {errors.length === 0 ? (
               <Card className="p-6 text-center">
@@ -479,7 +563,7 @@ export default function AdminPage() {
             )}
           </Section>
 
-          {/* 6. Tenant Roster */}
+          {/* 7. Tenant Roster */}
           <Section title="Tenant Roster" defaultOpen={false}>
             <Card className="p-0 overflow-hidden">
               <table className="w-full text-sm">

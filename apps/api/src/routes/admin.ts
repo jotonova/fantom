@@ -4,7 +4,7 @@ import type { FastifyPluginAsync } from 'fastify'
 import { db, events, tenants } from '@fantom/db'
 import { checkStorageHealth } from '@fantom/storage'
 import { Redis } from 'ioredis'
-import { getMetricsSnapshot, getAllTenantSummaries } from '@fantom/observability'
+import { getMetricsSnapshot, getAllTenantSummaries, logEventAwaitable } from '@fantom/observability'
 import { requirePlatformAdmin } from '../plugins/admin-auth.js'
 
 // ── Helper: set admin GUC in a transaction ────────────────────────────────────
@@ -169,6 +169,39 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
     const healthy = Object.values(checks).every((c) => c.healthy)
     return reply.send({ services: checks, healthy, timestamp: new Date().toISOString() })
+  })
+
+  // POST /admin/alerts/test ────────────────────────────────────────────────────
+  // Fires a synthetic event through the real logEvent + maybeAlert pipeline and
+  // returns a structured result explaining whether an alert was sent and why not
+  // if it was skipped. Useful for smoke-testing the email alert path end-to-end.
+  fastify.post<{
+    Body: {
+      severity?: 'error' | 'critical'
+      kind?: string
+      message?: string
+    }
+  }>('/admin/alerts/test', { preHandler: requirePlatformAdmin }, async (request, reply) => {
+    const severity = request.body?.severity ?? 'error'
+    const kind = request.body?.kind ?? 'test.synthetic_alert'
+    const message = request.body?.message ?? 'F9 smoke test alert'
+
+    const result = await logEventAwaitable({
+      kind,
+      severity,
+      errorMessage: message,
+      metadata: {
+        source: 'admin_test',
+        triggeredBy: request.user?.id ?? null,
+      },
+    })
+
+    return reply.send({
+      event_id: result.eventId,
+      alert_attempted: result.alertAttempted,
+      alert_throttled: result.alertResult?.skippedReason === 'throttled',
+      alert_skipped_reason: result.alertResult?.skippedReason ?? null,
+    })
   })
 }
 
