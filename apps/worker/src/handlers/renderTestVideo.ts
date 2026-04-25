@@ -164,6 +164,19 @@ function runFfmpeg(
   })
 }
 
+// ── Step wrapper ──────────────────────────────────────────────────────────────
+// Prefixes the thrown error message with [step-name] so the error_message
+// column in the DB immediately identifies which outbound call failed.
+
+async function step<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(`[${label}] ${msg}`)
+  }
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 export async function renderTestVideoHandler(opts: {
@@ -204,6 +217,7 @@ export async function renderTestVideoHandler(opts: {
     })
     if (!voiceClone) throw new Error(`Voice clone ${input.voiceCloneId} not found`)
     if (!voiceClone.providerVoiceId) throw new Error('Voice clone has no provider voice ID')
+    const providerVoiceId = voiceClone.providerVoiceId
 
     const imageAsset = await getAssetRow(input.imageAssetId, tenantId)
     if (!imageAsset) throw new Error(`Image asset ${input.imageAssetId} not found`)
@@ -214,15 +228,14 @@ export async function renderTestVideoHandler(opts: {
 
     // ── Step 3: Synthesize audio ───────────────────────────────────────────────
 
-    const audioBuffer = await synthesize({
-      text: input.text,
-      voiceId: voiceClone.providerVoiceId,
-    })
+    const audioBuffer = await step('elevenlabs-synthesize', () =>
+      synthesize({ text: input.text, voiceId: providerVoiceId }),
+    )
 
     // ── Step 4: Upload audio to R2 as an asset ─────────────────────────────────
 
     const audioKey = buildKey(tenantSlug, 'audio', `job-${jobId}-audio.mp3`)
-    await putObject(audioKey, audioBuffer, 'audio/mpeg')
+    await step('r2-put-audio', () => putObject(audioKey, audioBuffer, 'audio/mpeg'))
 
     const audioAsset = await createAssetRecord({
       tenantId,
@@ -242,7 +255,7 @@ export async function renderTestVideoHandler(opts: {
 
     // ── Step 6: Download image from R2 ────────────────────────────────────────
 
-    const imageBuffer = await getObjectBuffer(imageAsset.r2Key)
+    const imageBuffer = await step('r2-get-image', () => getObjectBuffer(imageAsset.r2Key))
 
     // Determine extension from MIME type
     const extMap: Record<string, string> = {
@@ -276,7 +289,7 @@ export async function renderTestVideoHandler(opts: {
 
     const videoBuffer = await fs.readFile(tmpOutput)
     const videoKey = buildKey(tenantSlug, 'video', `job-${jobId}-render.mp4`)
-    await putObject(videoKey, videoBuffer, 'video/mp4')
+    await step('r2-put-video', () => putObject(videoKey, videoBuffer, 'video/mp4'))
 
     const videoAsset = await createAssetRecord({
       tenantId,
