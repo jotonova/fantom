@@ -141,8 +141,7 @@ function runFfmpeg(
       .input(audioPath)
       .outputOptions([
         '-c:v', 'libx264',
-        '-preset', 'veryfast',   // lower CPU + memory than default 'medium'
-        '-threads', '1',         // single-threaded — limits peak memory on 512 MB hosts
+        '-preset', 'veryfast',   // good speed/quality balance; upgrade to 'medium' for F7+ quality tiers
         '-tune', 'stillimage',
         '-c:a', 'aac',
         '-b:a', '192k',
@@ -151,8 +150,8 @@ function runFfmpeg(
         '-movflags', '+faststart',
       ])
       .videoFilter(
-        // 720p — ~4× less encoding memory than 1080p
-        'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+        // 1080p — production quality; Standard tier (2 GB RAM) handles this comfortably
+        'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2',
       )
       .fps(30)
       .output(outputPath)
@@ -366,8 +365,8 @@ export async function renderTestVideoHandler(opts: {
       mimeType: 'video/mp4',
       sizeBytes: videoSizeBytes,
       durationSeconds,
-      width: 1280,
-      height: 720,
+      width: 1920,
+      height: 1080,
     })
 
     console.log(

@@ -151,6 +151,23 @@ curl -s -X POST "$API/auth/logout" \
 # → 204 No Content
 ```
 
+## Infrastructure Cost
+
+~$70/mo in production (as of F6):
+
+| Service | Plan | Cost |
+|---------|------|------|
+| Render API (`fantom-api`) | Starter | $7/mo |
+| Render Worker (`fantom-worker`) | **Standard** (2 GB RAM, 1 CPU) | $25/mo |
+| Render PostgreSQL | Basic-256MB | $7/mo |
+| Render Redis | Free | $0 |
+| Vercel (Next.js frontend) | Hobby | $0 |
+| ElevenLabs | Creator (100k chars/mo) | ~$22/mo |
+| Cloudflare R2 | Free tier (10 GB) | $0 |
+
+> The worker runs on Standard tier (up from Starter at F6) to support 1080p ffmpeg encoding without OOM.
+> Next upgrade trigger: Pro tier ($85/mo, 4 GB RAM) if we ever add 4K output or multi-stream rendering.
+
 ## Documentation
 
 - [Architecture](./ARCHITECTURE.md) — stack overview, data flow, multi-tenancy model

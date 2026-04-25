@@ -239,7 +239,7 @@ The render worker is a Render **Background Worker** (not a Web Service — it ha
    | Build Command      | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/worker build` |
    | Start Command      | `node apps/worker/dist/index.js`                        |
    | Pre-Deploy Command | *(leave empty — worker does not run migrations)*        |
-   | Instance Type      | **Starter** ($7/mo)                                     |
+   | Instance Type      | **Standard** ($25/mo) — 2 GB RAM, 1 CPU; required for 1080p ffmpeg |
 
 ### Step 2 — Add Environment Variables
 

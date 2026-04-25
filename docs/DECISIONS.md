@@ -404,13 +404,18 @@ For any commit that doesn't change apps/web or packages/shared but should still 
 **Decision:** ffmpeg-static bundled with the worker. No MediaConvert, Mux, or Cloudflare Stream.
 
 **Reasoning:**
-- **Cost**: AWS MediaConvert charges per minute of output (~$0.0075/min for HD). A $7/mo Render Starter worker running ffmpeg locally renders thousands of videos per month at zero marginal cost.
+- **Cost**: AWS MediaConvert charges per minute of output (~$0.0075/min for HD). A Render worker running ffmpeg locally renders thousands of videos per month at zero marginal cost.
 - **Simplicity**: ffmpeg-static bundles a static binary — no system package installation, no Docker image, no cloud API to authenticate.
 - **Speed**: network round-trips to a cloud transcoder (upload source → transcode → download result) add 30–90 seconds overhead. Local ffmpeg typically completes in 2–5 seconds for test videos.
 
 **Consequences:**
-- Worker CPU spikes during encoding. A Starter tier instance ($7/mo) handles one concurrent job fine; add `concurrency: 2` if queue depth grows.
+- Worker CPU spikes during encoding. Standard tier ($25/mo, 2 GB RAM, 1 CPU) handles 1080p + veryfast preset without OOM. Add `concurrency: 2` if queue depth grows.
 - ffmpeg binary (~60 MB) adds to the worker's build size. Acceptable for a background worker.
+
+**Tier history:**
+- F6 initial: Starter tier ($7/mo, 512 MB RAM) — required 720p output and `-threads 1` to avoid OOM.
+- F6 polish: upgraded to Standard tier ($25/mo, 2 GB RAM) — unlocked full 1080p output and multi-threaded encoding.
+- Next trigger: Pro tier ($85/mo, 4 GB RAM) if 4K output or multi-stream rendering is added.
 
 ### Choice D: Polling (not WebSockets) for /jobs page
 
