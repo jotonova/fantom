@@ -24,10 +24,15 @@ function r2AccountId(): string {
     .trim()
 }
 
+const _r2Endpoint = `https://${r2AccountId()}.r2.cloudflarestorage.com`
+console.log('[fantom-storage] R2 endpoint:', _r2Endpoint, '| bucket:', env('R2_BUCKET_NAME'))
+
 export const r2 = new S3Client({
   region: 'auto',
-  endpoint: `https://${r2AccountId()}.r2.cloudflarestorage.com`,
-  forcePathStyle: false, // virtual-hosted style: <bucket>.<account>.r2.cloudflarestorage.com
+  endpoint: _r2Endpoint,
+  forcePathStyle: true, // path-style: <account>.r2.cloudflarestorage.com/<bucket>/<key>
+  // virtual-hosted style was causing TLS handshake failures — the two-level subdomain
+  // <bucket>.<account>.r2.cloudflarestorage.com is not covered by *.r2.cloudflarestorage.com
   credentials: {
     accessKeyId: env('R2_ACCESS_KEY_ID'),
     secretAccessKey: env('R2_SECRET_ACCESS_KEY'),
