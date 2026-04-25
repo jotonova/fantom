@@ -55,6 +55,52 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
+// ── Media metadata extraction ─────────────────────────────────────────────────
+
+interface MediaMetadata {
+  width?: number
+  height?: number
+  durationSeconds?: number
+}
+
+function extractMediaMetadata(file: File): Promise<MediaMetadata> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const cleanup = () => URL.revokeObjectURL(url)
+
+    if (file.type.startsWith('image/')) {
+      const img = new Image()
+      img.onload = () => { cleanup(); resolve({ width: img.naturalWidth, height: img.naturalHeight }) }
+      img.onerror = () => { cleanup(); resolve({}) }
+      img.src = url
+    } else if (file.type.startsWith('video/')) {
+      const video = document.createElement('video')
+      video.preload = 'metadata'
+      video.onloadedmetadata = () => {
+        cleanup()
+        resolve({
+          width: video.videoWidth || undefined,
+          height: video.videoHeight || undefined,
+          durationSeconds: isFinite(video.duration) ? video.duration : undefined,
+        })
+      }
+      video.onerror = () => { cleanup(); resolve({}) }
+      video.src = url
+    } else if (file.type.startsWith('audio/')) {
+      const audio = new Audio()
+      audio.preload = 'metadata'
+      audio.onloadedmetadata = () => {
+        cleanup()
+        resolve({ durationSeconds: isFinite(audio.duration) ? audio.duration : undefined })
+      }
+      audio.onerror = () => { cleanup(); resolve({}) }
+      audio.src = url
+    } else {
+      resolve({})
+    }
+  })
+}
+
 // ── Upload hook ───────────────────────────────────────────────────────────────
 
 interface UploadItem {
@@ -84,23 +130,26 @@ function useUpload(onComplete: (asset: Asset) => void) {
           body: JSON.stringify({ filename: file.name, mimeType: file.type, kind }),
         })
 
-        // 2. PUT to R2 with progress tracking.
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest()
-          xhr.open('PUT', uploadUrl)
-          xhr.setRequestHeader('Content-Type', file.type)
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              const pct = Math.round((e.loaded / e.total) * 90)
-              setUploads((prev) =>
-                prev.map((u) => (u.id === uploadId ? { ...u, progress: pct } : u)),
-              )
+        // 2. PUT to R2 (with progress) + extract metadata — run in parallel.
+        const [, meta] = await Promise.all([
+          new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest()
+            xhr.open('PUT', uploadUrl)
+            xhr.setRequestHeader('Content-Type', file.type)
+            xhr.upload.onprogress = (e) => {
+              if (e.lengthComputable) {
+                const pct = Math.round((e.loaded / e.total) * 90)
+                setUploads((prev) =>
+                  prev.map((u) => (u.id === uploadId ? { ...u, progress: pct } : u)),
+                )
+              }
             }
-          }
-          xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new Error(`R2 PUT failed: ${xhr.status}`)))
-          xhr.onerror = () => reject(new Error('Network error'))
-          xhr.send(file)
-        })
+            xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new Error(`R2 PUT failed: ${xhr.status}`)))
+            xhr.onerror = () => reject(new Error('Network error'))
+            xhr.send(file)
+          }),
+          extractMediaMetadata(file),
+        ])
 
         // 3. Register in DB.
         const asset = await apiFetch<Asset>('/assets', {
@@ -111,6 +160,9 @@ function useUpload(onComplete: (asset: Asset) => void) {
             kind,
             mimeType: file.type,
             sizeBytes: file.size,
+            ...(meta.width !== undefined ? { width: meta.width } : {}),
+            ...(meta.height !== undefined ? { height: meta.height } : {}),
+            ...(meta.durationSeconds !== undefined ? { durationSeconds: meta.durationSeconds } : {}),
           }),
         })
 
@@ -142,25 +194,31 @@ function AssetCard({ asset, onDelete }: { asset: Asset; onDelete: (id: string) =
   const [deleting, setDeleting] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  async function handleDelete() {
-    if (!confirm(`Delete "${asset.originalFilename}"?`)) return
-    setDeleting(true)
-    try {
-      await apiFetch(`/assets/${asset.id}`, { method: 'DELETE' })
-      onDelete(asset.id)
-    } catch {
-      setDeleting(false)
-    }
-  }
-
-  function handleCopy() {
+  function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation()
     void navigator.clipboard.writeText(asset.publicUrl)
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
 
+  function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm(`Delete "${asset.originalFilename}"?`)) return
+    setDeleting(true)
+    apiFetch(`/assets/${asset.id}`, { method: 'DELETE' })
+      .then(() => onDelete(asset.id))
+      .catch(() => setDeleting(false))
+  }
+
+  function handleCardClick() {
+    window.open(asset.publicUrl, '_blank', 'noopener,noreferrer')
+  }
+
   return (
-    <Card className="group relative flex flex-col gap-3 overflow-hidden p-3">
+    <Card
+      className="group relative flex cursor-pointer flex-col gap-3 overflow-hidden p-3"
+      onClick={handleCardClick}
+    >
       {/* Preview */}
       <div className="relative flex h-36 items-center justify-center overflow-hidden rounded-[6px] bg-fantom-steel">
         {asset.kind === 'image' && (
@@ -171,7 +229,7 @@ function AssetCard({ asset, onDelete }: { asset: Asset; onDelete: (id: string) =
           />
         )}
         {asset.kind === 'audio' && (
-          <div className="w-full px-2">
+          <div className="w-full px-2" onClick={(e) => e.stopPropagation()}>
             <audio controls className="w-full" src={asset.publicUrl} preload="none">
               <track kind="captions" />
             </audio>
@@ -183,6 +241,7 @@ function AssetCard({ asset, onDelete }: { asset: Asset; onDelete: (id: string) =
             className="h-full w-full object-contain"
             src={asset.publicUrl}
             preload="metadata"
+            onClick={(e) => e.stopPropagation()}
           />
         )}
         {(asset.kind === 'document' || asset.kind === 'other') && (
