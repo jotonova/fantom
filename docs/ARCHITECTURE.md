@@ -13,7 +13,8 @@ fantom/
 └── packages/
     ├── config/   # Shared TypeScript, ESLint, Prettier configs
     ├── db/       # Drizzle schema, migrations, and singleton client (@fantom/db)
-    ├── jobs/     # @fantom/jobs — BullMQ queue + worker factory
+    ├── distribution-bus/ # @fantom/distribution-bus — strategy pattern for destination providers
+    ├── jobs/     # @fantom/jobs — BullMQ queues: fantom-render + fantom-distribute
     ├── render-bus/ # @fantom/render-bus — strategy pattern for render providers
     ├── shared/   # Shared TypeScript types (HealthResponse, etc.)
     ├── storage/  # @fantom/storage — Cloudflare R2 client (S3-compatible)
@@ -247,14 +248,31 @@ FfmpegProvider (apps/worker/src/providers/ffmpegProvider.ts)
   ▼
 Worker dispatcher
   │  8. createAssetRecord(videoAsset) in DB
-  │  9. jobs.output_asset_id = videoAsset.id
-  │  10. status='completed', progress=100, completedAt=now()
+  │  9. triggerAutoPublish() — reads tenant_settings 'distribution.auto_publish'
+  │     For each matching rule: INSERT distributions row → enqueue fantom-distribute
+  │     (failures logged, render job continues regardless)
+  │  10. jobs.output_asset_id = videoAsset.id, status='completed', progress=100
   │
   ▼
-Browser polls GET /jobs every 3s → sees status transition
-  └── completed? → "View video" → opens R2 public URL (direct CDN, no API proxy)
+Redis (BullMQ queue: 'fantom-distribute')
+  │
+  ▼
+Distribution dispatcher (same worker process, separate BullMQ Worker, concurrency=3)
+  │  1. Read distribution row from DB
+  │  2. Load output asset → build DistributionContext (includes publicUrl)
+  │  3. DistributionBus.resolve(kind) → picks provider (WebhookDestination in F8)
+  │  4. provider.publish(context) → sends to external system
+  │  5. Update distributions row: status='completed', externalId, responsePayload
+  │
+  ▼
+External system receives webhook POST with { event, tenantId, jobId, asset: {...} }
 
-On failure:
+On distribution failure:
+  WebhookRetryableError (5xx, network) → retries < max_retries → status='queued', BullMQ retries
+  Non-retryable (4xx) → status='failed', errorMessage set, no retry
+  CancelledError → resolve cleanly, no retry
+
+On render job failure:
   Worker catch block → retries < max_retries (2) → status='queued', BullMQ retries
                      → retries >= max_retries     → status='failed', errorMessage set
 ```
@@ -264,6 +282,14 @@ On failure:
 ```
 pending → queued → processing → completed
                               → failed (retry → queued)
+         → cancelled (from pending or queued only)
+```
+
+### Distribution Status Transitions
+
+```
+pending → queued → processing → completed
+                              → failed (retry → queued, up to max_retries=3)
          → cancelled (from pending or queued only)
 ```
 

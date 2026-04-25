@@ -50,6 +50,13 @@
       "when": 1777300000000,
       "tag": "0006_tenants_bootstrap_select",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1777400000000,
+      "tag": "0007_distributions",
+      "breakpoints": true
     }
   ]
 }

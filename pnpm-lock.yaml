@@ -17,6 +17,9 @@ importers:
       '@fantom/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@fantom/distribution-bus':
+        specifier: workspace:*
+        version: link:../../packages/distribution-bus
       '@fantom/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
@@ -112,6 +115,9 @@ importers:
       '@fantom/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@fantom/distribution-bus':
+        specifier: workspace:*
+        version: link:../../packages/distribution-bus
       '@fantom/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
@@ -182,6 +188,15 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
+  packages/distribution-bus:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.39
       typescript:
         specifier: ^5.4.0
         version: 5.9.3

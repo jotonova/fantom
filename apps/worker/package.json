@@ -15,6 +15,7 @@
   "dependencies": {
     "@fantom/db": "workspace:*",
     "@fantom/jobs": "workspace:*",
+    "@fantom/distribution-bus": "workspace:*",
     "@fantom/render-bus": "workspace:*",
     "@fantom/storage": "workspace:*",
     "@fantom/voice": "workspace:*",

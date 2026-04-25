@@ -29,7 +29,7 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
    | Field            | Value                        |
    |------------------|------------------------------|
    | Root Directory   | *(blank — repo root)*        |
-   | Build Command    | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/api build` |
+   | Build Command    | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build && pnpm --filter @fantom/api build` |
    | Start Command    | `node apps/api/dist/index.js` |
    | Runtime          | Node 20                      |
 
@@ -236,7 +236,7 @@ The render worker is a Render **Background Worker** (not a Web Service — it ha
    | Region             | **Oregon (US West)** — must match other services        |
    | Root Directory     | *(blank — monorepo root)*                               |
    | Runtime            | Node 20                                                 |
-   | Build Command      | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/worker build` |
+   | Build Command      | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build && pnpm --filter @fantom/worker build` |
    | Start Command      | `node apps/worker/dist/index.js`                        |
    | Pre-Deploy Command | *(leave empty — worker does not run migrations)*        |
    | Instance Type      | **Standard** ($25/mo) — 2 GB RAM, 1 CPU; required for 1080p ffmpeg |
@@ -261,10 +261,10 @@ Copy all environment variables from `fantom-api`. The worker needs the same set:
 
 ### Step 3 — Update the API Build Command
 
-The `fantom-api` build command must also compile `@fantom/jobs` and `@fantom/render-bus`:
+The `fantom-api` build command must also compile `@fantom/jobs`, `@fantom/render-bus`, and `@fantom/distribution-bus`:
 
 ```
-pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/api build
+pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build && pnpm --filter @fantom/api build
 ```
 
 Update this in **Render → fantom-api → Settings → Build & Deploy → Build Command**.

@@ -52,7 +52,7 @@ pnpm --filter @fantom/db db:seed
 
 ```bash
 # Build shared packages first, then start apps
-pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build
+pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build
 pnpm dev
 # Worker dev (in a separate terminal, requires local Redis)
 pnpm --filter @fantom/worker dev
@@ -83,6 +83,7 @@ fantom/
     ├── config/   # Shared TS/ESLint/Prettier configs
     ├── db/       # Drizzle schema, migrations, singleton client
     ├── jobs/     # @fantom/jobs — BullMQ queue + worker factory
+    ├── distribution-bus/ # @fantom/distribution-bus — strategy pattern for destination providers
     ├── render-bus/ # @fantom/render-bus — strategy pattern for render providers
     ├── shared/   # Shared TypeScript types
     ├── storage/  # @fantom/storage — Cloudflare R2 client
@@ -121,6 +122,14 @@ fantom/
 | GET    | `/jobs/:id`       | Bearer   | Get single job with output asset URL         |
 | POST   | `/jobs/:id/cancel`| Bearer   | Cancel pending/queued job                    |
 | POST   | `/jobs/:id/retry` | Bearer   | Retry a failed job                           |
+| POST   | `/distributions`  | Bearer   | Create and enqueue a distribution            |
+| GET    | `/distributions`  | Bearer   | List tenant distributions (cursor pagination)|
+| GET    | `/distributions/:id` | Bearer| Get single distribution record               |
+| POST   | `/distributions/:id/retry` | Bearer | Retry a failed distribution         |
+| POST   | `/distributions/:id/cancel` | Bearer | Cancel a pending/queued distribution |
+| DELETE | `/distributions/:id` | Bearer | Delete a terminal distribution record     |
+| GET    | `/tenant-settings/distribution` | Bearer | Get auto-publish config        |
+| PUT    | `/tenant-settings/distribution` | Bearer | Set auto-publish config        |
 
 ### Smoke test — login → verify → me
 

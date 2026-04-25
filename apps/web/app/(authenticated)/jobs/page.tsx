@@ -118,6 +118,91 @@ function kindLabel(kind: string): string {
 
 const TERMINAL_STATUSES: readonly JobStatus[] = ['completed', 'failed', 'cancelled']
 
+// ── Distribute modal ──────────────────────────────────────────────────────────
+
+function DistributeModal({ job, onClose }: { job: RenderJob; onClose: () => void }) {
+  const [webhookUrl, setWebhookUrl] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+
+  async function handleDistribute() {
+    setError(null)
+    if (!webhookUrl.trim()) { setError('Webhook URL is required'); return }
+    if (!webhookUrl.startsWith('https://')) { setError('URL must start with https://'); return }
+    setSubmitting(true)
+    try {
+      await apiFetch('/distributions', {
+        method: 'POST',
+        body: JSON.stringify({ jobId: job.id, kind: 'webhook', config: { url: webhookUrl.trim() } }),
+      })
+      setDone(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create distribution')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={onClose}
+    >
+      <div
+        className="mx-4 w-full max-w-md rounded-fantom border border-fantom-steel-border bg-fantom-steel p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="font-semibold text-fantom-text">Distribute job {job.id.slice(-8)}</h2>
+          <button onClick={onClose} className="text-fantom-text-muted hover:text-fantom-text">✕</button>
+        </div>
+
+        {done ? (
+          <div className="space-y-4">
+            <p className="text-sm text-green-400">Distribution queued successfully.</p>
+            <div className="flex justify-end gap-3">
+              <Button size="sm" variant="ghost" onClick={onClose}>Close</Button>
+              <Button size="sm" onClick={() => { window.location.href = '/distributions' }}>
+                View distributions →
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-fantom-text-muted">
+                Webhook URL <span className="text-red-400">*</span>
+              </label>
+              <input
+                type="url"
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+                placeholder="https://hooks.your-domain.com/fantom"
+                className="w-full rounded-[6px] border border-fantom-steel-border bg-fantom-steel-lighter px-3 py-2 text-sm text-fantom-text placeholder-fantom-text-muted focus:border-fantom-blue focus:outline-none"
+              />
+              <p className="mt-1 text-xs text-fantom-text-muted">
+                More destinations (YouTube, Instagram, etc.) coming soon.
+              </p>
+            </div>
+
+            {error && <p className="text-sm text-red-400">{error}</p>}
+
+            <div className="flex justify-end gap-3">
+              <Button size="sm" variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
+              <Button size="sm" onClick={() => void handleDistribute()} disabled={submitting}>
+                {submitting ? <Spinner size="sm" /> : 'Send'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Job row ───────────────────────────────────────────────────────────────────
+
 function JobRow({
   job,
   cancelling,
@@ -132,6 +217,7 @@ function JobRow({
   onDelete: (id: string) => void
 }) {
   const [busy, setBusy] = useState(false)
+  const [distributeOpen, setDistributeOpen] = useState(false)
 
   async function cancel() {
     setBusy(true)
@@ -183,13 +269,27 @@ function JobRow({
       {/* Actions */}
       <div className="flex shrink-0 items-center gap-2">
         {job.status === 'completed' && job.outputAsset && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => window.open(job.outputAsset!.publicUrl, '_blank')}
-          >
-            View video
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => window.open(job.outputAsset!.publicUrl, '_blank')}
+            >
+              View video
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setDistributeOpen(true)}
+              className="text-fantom-text-muted"
+              title="Distribute this video"
+            >
+              Distribute
+            </Button>
+          </>
+        )}
+        {distributeOpen && (
+          <DistributeModal job={job} onClose={() => setDistributeOpen(false)} />
         )}
         {isCancellable && (
           <Button

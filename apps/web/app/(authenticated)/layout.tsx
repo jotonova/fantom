@@ -20,6 +20,7 @@ const NAV_ITEMS = [
   { label: 'Library', href: '/library' },
   { label: 'Voices', href: '/voices' },
   { label: 'Jobs', href: '/jobs' },
+  { label: 'Distributions', href: '/distributions' },
 ]
 
 export default function AuthenticatedLayout({ children }: { children: React.ReactNode }) {

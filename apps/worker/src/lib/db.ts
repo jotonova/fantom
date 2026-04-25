@@ -1,5 +1,6 @@
-import { db, jobs, assets, voiceClones, tenants, tenantSettings } from '@fantom/db'
-import type { Job as DbJob, Asset, VoiceClone } from '@fantom/db'
+import { db, jobs, assets, voiceClones, tenants, tenantSettings, distributions } from '@fantom/db'
+import type { Job as DbJob, Asset, VoiceClone, Distribution } from '@fantom/db'
+import type { DestinationKind } from '@fantom/distribution-bus'
 import { and, eq, sql } from 'drizzle-orm'
 
 // ── Job helpers ────────────────────────────────────────────────────────────────
@@ -133,4 +134,95 @@ export async function getPreferredProvider(tenantId: string): Promise<string | u
   if (!row?.value) return undefined
   const v = row.value as Record<string, unknown>
   return typeof v['name'] === 'string' ? v['name'] : undefined
+}
+
+// ── Auto-publish config ────────────────────────────────────────────────────────
+
+export interface AutoPublishEntry {
+  kind: DestinationKind
+  config: Record<string, unknown>
+  on_kinds?: string[]
+}
+
+/**
+ * Reads the tenant's auto_publish config from tenant_settings.
+ * Key: 'distribution.auto_publish' — value: AutoPublishEntry[]
+ * Returns empty array if not set.
+ */
+export async function getAutoPublishConfig(tenantId: string): Promise<AutoPublishEntry[]> {
+  const row = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    const [r] = await tx
+      .select({ value: tenantSettings.value })
+      .from(tenantSettings)
+      .where(
+        and(
+          eq(tenantSettings.tenantId, tenantId),
+          eq(tenantSettings.key, 'distribution.auto_publish'),
+        ),
+      )
+      .limit(1)
+    return r
+  })
+
+  if (!Array.isArray(row?.value)) return []
+  return row.value as AutoPublishEntry[]
+}
+
+// ── Distribution helpers ───────────────────────────────────────────────────────
+
+export async function getDistributionRow(
+  distributionId: string,
+  tenantId: string,
+): Promise<Distribution | undefined> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    const [row] = await tx
+      .select()
+      .from(distributions)
+      .where(eq(distributions.id, distributionId))
+      .limit(1)
+    return row
+  })
+}
+
+export async function patchDistribution(
+  distributionId: string,
+  tenantId: string,
+  values: Partial<typeof distributions.$inferInsert>,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    await tx
+      .update(distributions)
+      .set({ ...values, updatedAt: new Date() })
+      .where(eq(distributions.id, distributionId))
+  })
+}
+
+export async function createDistributionRecord(params: {
+  tenantId: string
+  jobId: string
+  assetId: string
+  destinationKind: DestinationKind
+  config: Record<string, unknown>
+  createdByUserId?: string | null
+}): Promise<Distribution> {
+  const row = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${params.tenantId}, true)`)
+    const [r] = await tx
+      .insert(distributions)
+      .values({
+        tenantId: params.tenantId,
+        jobId: params.jobId,
+        assetId: params.assetId,
+        destinationKind: params.destinationKind,
+        config: params.config,
+        createdByUserId: params.createdByUserId ?? null,
+      })
+      .returning()
+    return r
+  })
+  if (!row) throw new Error('Failed to create distribution record')
+  return row
 }

@@ -5,6 +5,7 @@ import { Redis } from 'ioredis'
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 export const QUEUE_NAME = 'fantom-render'
+export const DISTRIBUTE_QUEUE_NAME = 'fantom-distribute'
 
 // ── Job kinds ─────────────────────────────────────────────────────────────────
 
@@ -19,12 +20,18 @@ export const JobKind = {
 
 export type JobKindValue = (typeof JobKind)[keyof typeof JobKind]
 
-// ── BullMQ payload ────────────────────────────────────────────────────────────
+// ── BullMQ payloads ───────────────────────────────────────────────────────────
 
-// The BullMQ payload is deliberately minimal — only the IDs needed to look up
-// the full job from the database. The actual job input lives in jobs.input (DB).
+// Payloads are deliberately minimal — only the IDs needed to look up the full
+// record from the database. Actual data lives in the DB rows.
+
 export interface QueuePayload {
   jobId: string
+  tenantId: string
+}
+
+export interface DistributePayload {
+  distributionId: string
   tenantId: string
 }
 
@@ -65,7 +72,7 @@ export function getWorker(handler: Processor<QueuePayload>): Worker<QueuePayload
   })
 }
 
-// ── Enqueue ───────────────────────────────────────────────────────────────────
+// ── Enqueue render job ────────────────────────────────────────────────────────
 
 export async function enqueueJob(opts: {
   jobId: string
@@ -83,5 +90,53 @@ export async function enqueueJob(opts: {
     opts.kind, // BullMQ job name — used for dispatch in the worker
     { jobId: opts.jobId, tenantId: opts.tenantId },
     { jobId: opts.jobId }, // use DB job ID as the BullMQ job ID for easy lookup
+  )
+}
+
+// ── Distribute queue singleton ────────────────────────────────────────────────
+
+let _distributeQueue: Queue<DistributePayload> | null = null
+
+export function getDistributeQueue(): Queue<DistributePayload> {
+  if (!_distributeQueue) {
+    _distributeQueue = new Queue<DistributePayload>(DISTRIBUTE_QUEUE_NAME, {
+      connection: makeRedisConnection(),
+      defaultJobOptions: {
+        attempts: 4,
+        backoff: { type: 'exponential', delay: 10_000 },
+        removeOnComplete: { count: 200 },
+        removeOnFail: { count: 200 },
+      },
+    })
+  }
+  return _distributeQueue
+}
+
+export function getDistributeWorker(
+  handler: Processor<DistributePayload>,
+): Worker<DistributePayload> {
+  return new Worker<DistributePayload>(DISTRIBUTE_QUEUE_NAME, handler, {
+    connection: makeRedisConnection(),
+    concurrency: 3, // distributions can run in parallel; they're I/O-bound
+  })
+}
+
+// ── Enqueue distribution ──────────────────────────────────────────────────────
+
+export async function enqueueDistribution(opts: {
+  distributionId: string
+  tenantId: string
+  kind: string
+}): Promise<void> {
+  const queue = getDistributeQueue()
+
+  // Remove any existing BullMQ job with the same ID (e.g., after a retry reset)
+  const existing = await queue.getJob(opts.distributionId)
+  if (existing) await existing.remove()
+
+  await queue.add(
+    opts.kind, // destination kind — used for dispatch in the worker
+    { distributionId: opts.distributionId, tenantId: opts.tenantId },
+    { jobId: opts.distributionId },
   )
 }

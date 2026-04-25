@@ -553,6 +553,101 @@ When a new provider is ready, flip `canHandle` and fill in `render()` — no oth
 
 ---
 
+## Decision #010 — F8 Distribution Layer
+
+**Context:** When a render job completes, the MP4 lives in R2. Every Fantom module (Listing Video
+Factory, Flip Automator, Market Update Generator, etc.) will need a different set of destination
+channels. Without abstraction, each module would hardcode its own delivery logic. F8 introduces
+a distribution layer that mirrors F7's Render Bus pattern: pluggable `DestinationProvider`
+implementations behind a `DistributionBus`, triggered automatically after render completion.
+
+### Choice A: Separate distribution-bus package vs inlining in apps/worker
+
+**Decision:** Separate `packages/distribution-bus` workspace, same shape as `packages/render-bus`.
+
+**Why?**
+- The `DestinationProvider` interface and `CancelledError` are types any future distribution
+  consumer (a second worker, an admin tool, test fixtures) might import.
+- Keeps the interface pure — no heavy runtime dependencies (`fluent-ffmpeg`, `@fantom/voice`)
+  that belong at the app layer.
+- Follows the established monorepo pattern: interfaces in `packages/`, implementations in `apps/`.
+
+### Choice B: Webhook first
+
+**Decision:** Only `WebhookDestination` is functional in F8. YouTube, Facebook, Instagram, MLS
+are stubs that throw on `publish()`.
+
+**Why webhook first?**
+- It's the most flexible distribution channel: any system that can receive an HTTP POST can
+  consume Fantom completions. Novacor's existing backend, Zapier, Make.com, custom scripts, etc.
+- Zero additional API keys or OAuth flows needed.
+- Provides end-to-end validation of the entire distribution pipeline (DB row → BullMQ →
+  dispatcher → provider → external call → result persisted) before investing in platform-specific
+  integrations.
+
+### Choice C: HTTPS-only for webhook URLs
+
+**Decision:** Webhook URLs must start with `https://`. HTTP URLs are rejected at validation time
+(API layer) and also checked in `WebhookDestination.publish()`.
+
+**Why?**
+- Webhook payloads contain the tenant ID, job ID, and public asset URL. Sending these over
+  plain HTTP exposes them to network interception.
+- Any modern webhook receiver supports HTTPS. There's no legitimate production use case for HTTP.
+- Failing fast at validation gives a clear error message rather than silently sending plaintext.
+
+### Choice D: Retry on 5xx, not on 4xx
+
+**Decision:** `WebhookRetryableError` is thrown on HTTP 5xx and network/timeout failures.
+4xx responses cause an immediate non-retryable failure.
+
+**Why?**
+- 5xx means the receiving server had a transient error — retrying may succeed.
+- 4xx (400 Bad Request, 401 Unauthorized, 404 Not Found) means our request is wrong or
+  the endpoint is misconfigured. Retrying an identical request will always get the same 4xx.
+  Retrying burns attempts, delays detection, and doesn't fix the underlying misconfiguration.
+- The clear failure message on 4xx prompts the user to check their webhook config.
+
+### Choice E: Auto-publish failures don't fail the render job
+
+**Decision:** `triggerAutoPublish()` is wrapped in try/catch per-entry. Any error is logged and
+skipped. The render job completes normally regardless.
+
+**Why?**
+- Render and distribution are orthogonal concerns. A misconfigured webhook URL should not roll
+  back a successfully rendered video.
+- Distribution rows are individually retryable from the `/distributions` page.
+- If auto-publish were fail-fast, a single bad webhook config could break the entire render
+  pipeline for a tenant.
+
+### Choice F: Single worker process, dual BullMQ queue
+
+**Decision:** One Render Background Worker subscribes to both `fantom-render` and
+`fantom-distribute`. Separate `Worker` instances share DB/Redis connections.
+
+**Why not two Render services?**
+- At F8 scale (one tenant, occasional videos), distribution volume doesn't justify +$25/mo.
+- BullMQ supports multiple workers in one process cleanly.
+- The distribute worker has higher concurrency (3) since distribution jobs are I/O-bound
+  (HTTP calls), not CPU-bound like ffmpeg. This provides parallelism within the same process.
+
+**Upgrade path:** When distribution volume grows, split into a dedicated `fantom-dist-worker`
+Render Background Worker. The queue name (`fantom-distribute`) and payload schema are stable —
+only the process boundary changes.
+
+### Choice G: Distribution rows created before status='completed' on the job
+
+**Decision:** `triggerAutoPublish()` runs after the output asset record is created but BEFORE
+`patchJob(status='completed')`. Distribution rows are inserted and enqueued while the job is
+still in its final processing step.
+
+**Why?**
+- Any downstream system polling on `status='completed'` will see distributions already queued
+  when they observe the completed state — no race window.
+- Keeps the job completion atomic from the external observer's perspective.
+
+---
+
 ### ⚠️ MANDATORY ROTATION TRIGGER
 
 > **Before any external user (non-Justin, non-Amy) is added to Fantom, the following MUST happen:**

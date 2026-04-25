@@ -1,14 +1,26 @@
 import 'dotenv/config'
 import { db, pool } from '@fantom/db'
-import { getWorker, JobKind } from '@fantom/jobs'
-import type { QueuePayload } from '@fantom/jobs'
-import type { Job } from 'bullmq'
+import { getWorker, getDistributeWorker, enqueueDistribution, JobKind } from '@fantom/jobs'
+import type { QueuePayload, DistributePayload } from '@fantom/jobs'
+import type { Job as BullJob } from 'bullmq'
 import { sql } from 'drizzle-orm'
-import { RenderBus, CancelledError } from '@fantom/render-bus'
+import { RenderBus, CancelledError as RenderCancelledError } from '@fantom/render-bus'
 import type { RenderContext } from '@fantom/render-bus'
+import {
+  DistributionBus,
+  CancelledError as DistributionCancelledError,
+} from '@fantom/distribution-bus'
+import type { DistributionContext } from '@fantom/distribution-bus'
 import { FfmpegProvider } from './providers/ffmpegProvider.js'
 import { RemotionProvider } from './providers/remotionProvider.js'
 import { CapCutProvider } from './providers/capcutProvider.js'
+import { WebhookDestination } from './destinations/webhookDestination.js'
+import { WebhookRetryableError } from './destinations/webhookDestination.js'
+import { YouTubeDestination } from './destinations/youtubeDestination.js'
+import { FacebookDestination } from './destinations/facebookDestination.js'
+import { InstagramDestination } from './destinations/instagramDestination.js'
+import { MlsDestination } from './destinations/mlsDestination.js'
+import { getPublicUrl } from '@fantom/storage'
 import {
   getJobRow,
   patchJob,
@@ -16,8 +28,13 @@ import {
   getPreferredProvider,
   createAssetRecord,
   getTenantSlug,
+  getAutoPublishConfig,
+  createDistributionRecord,
+  getDistributionRow,
+  patchDistribution,
+  getAssetRow,
 } from './lib/db.js'
-import { getPublicUrl } from '@fantom/storage'
+import type { DestinationKind } from '@fantom/distribution-bus'
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
@@ -38,38 +55,102 @@ try {
   process.exit(1)
 }
 
-// ── Render bus setup ──────────────────────────────────────────────────────────
-// Providers are checked in registration order when falling back.
-// FfmpegProvider is first and handles all current job kinds.
+// ── Render bus ────────────────────────────────────────────────────────────────
 
-const bus = new RenderBus()
+const renderBus = new RenderBus()
   .register(new FfmpegProvider())
   .register(new RemotionProvider())
   .register(new CapCutProvider())
 
-console.log(`fantom-worker: render bus registered providers: ${bus.registeredNames().join(', ')}`)
+console.log(`fantom-worker: render bus providers: ${renderBus.registeredNames().join(', ')}`)
 
-// ── Job dispatcher ────────────────────────────────────────────────────────────
+// ── Distribution bus ──────────────────────────────────────────────────────────
 
-async function dispatch(bullJob: Job<QueuePayload>): Promise<void> {
+const distributionBus = new DistributionBus()
+  .register(new WebhookDestination())
+  .register(new YouTubeDestination())
+  .register(new FacebookDestination())
+  .register(new InstagramDestination())
+  .register(new MlsDestination())
+
+console.log(
+  `fantom-worker: distribution bus providers: ${distributionBus.registeredNames().join(', ')}`,
+)
+
+// ── Auto-publish trigger ──────────────────────────────────────────────────────
+// Called after a render job's output asset is created, before status='completed'.
+// Inserts distribution rows + enqueues to fantom-distribute for each matching rule.
+// Failures are logged but do NOT fail the render job.
+
+async function triggerAutoPublish(opts: {
+  tenantId: string
+  jobId: string
+  jobKind: string
+  assetId: string
+}): Promise<void> {
+  const { tenantId, jobId, jobKind, assetId } = opts
+
+  let rules
+  try {
+    rules = await getAutoPublishConfig(tenantId)
+  } catch (err) {
+    console.error(`[job:${jobId}] auto-publish config read failed:`, err)
+    return
+  }
+
+  const matching = rules.filter(
+    (r) => !r.on_kinds || r.on_kinds.includes(jobKind),
+  )
+
+  if (matching.length === 0) return
+
+  console.log(`[job:${jobId}] auto-publish: ${matching.length} rule(s) matched`)
+
+  for (const rule of matching) {
+    try {
+      const dist = await createDistributionRecord({
+        tenantId,
+        jobId,
+        assetId,
+        destinationKind: rule.kind,
+        config: rule.config,
+        createdByUserId: null,
+      })
+
+      await enqueueDistribution({
+        distributionId: dist.id,
+        tenantId,
+        kind: rule.kind,
+      })
+
+      // Mark as queued in DB
+      await patchDistribution(dist.id, tenantId, { status: 'queued' })
+
+      console.log(`[job:${jobId}] auto-publish: enqueued distribution ${dist.id} → ${rule.kind}`)
+    } catch (err) {
+      console.error(`[job:${jobId}] auto-publish: failed to enqueue ${rule.kind}:`, err)
+      // Continue with remaining rules — don't abort
+    }
+  }
+}
+
+// ── Render dispatcher ─────────────────────────────────────────────────────────
+
+async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
   const { jobId, tenantId } = bullJob.data
 
-  // Read job from DB
   const job = await getJobRow(jobId, tenantId)
   if (!job) throw new Error(`Job ${jobId} not found in DB`)
 
   const kind = job.kind
 
-  // Mark as processing
   await patchJob(jobId, tenantId, { status: 'processing', startedAt: new Date() })
 
-  // Resolve provider — check tenant preference first
   const preferred = await getPreferredProvider(tenantId).catch(() => undefined)
-  const provider = bus.resolve(kind, preferred)
+  const provider = renderBus.resolve(kind, preferred)
 
-  console.log(`fantom-worker: job ${jobId} (${kind}) → provider: ${provider.name}`)
+  console.log(`fantom-worker: render job ${jobId} (${kind}) → provider: ${provider.name}`)
 
-  // Build render context
   const tenantSlug = await getTenantSlug(tenantId)
 
   const context: RenderContext = {
@@ -82,7 +163,7 @@ async function dispatch(bullJob: Job<QueuePayload>): Promise<void> {
     },
     checkCancelled: async () => {
       const row = await getJobRow(jobId, tenantId)
-      if (row?.status === 'cancelled') throw new CancelledError()
+      if (row?.status === 'cancelled') throw new RenderCancelledError()
     },
     log: (msg) => {
       console.log(`[job:${jobId}] ${msg}`)
@@ -92,7 +173,6 @@ async function dispatch(bullJob: Job<QueuePayload>): Promise<void> {
   try {
     const result = await provider.render(context)
 
-    // Create output asset record
     const videoAsset = await createAssetRecord({
       tenantId,
       kind: 'video',
@@ -109,7 +189,15 @@ async function dispatch(bullJob: Job<QueuePayload>): Promise<void> {
       `[job:${jobId}] video asset created ${videoAsset.id} — ${getPublicUrl(result.r2Key)}`,
     )
 
-    // Mark job complete
+    // Auto-publish trigger — must happen BEFORE status='completed' so any
+    // downstream system that polls on completed sees distributions already queued.
+    await triggerAutoPublish({
+      tenantId,
+      jobId,
+      jobKind: kind,
+      assetId: videoAsset.id,
+    })
+
     await patchJob(jobId, tenantId, {
       status: 'completed',
       progress: 100,
@@ -117,17 +205,13 @@ async function dispatch(bullJob: Job<QueuePayload>): Promise<void> {
       completedAt: new Date(),
     })
   } catch (err) {
-    if (err instanceof CancelledError) {
-      // DB already shows 'cancelled' (set by the API). Resolve cleanly —
-      // BullMQ marks the job completed, no retry scheduled.
+    if (err instanceof RenderCancelledError) {
       console.log(`[job:cancelled] bull job ${bullJob.id} (${kind}) — not retrying`)
       return
     }
 
-    // Error handling with retry logic
     const errMessage = err instanceof Error ? err.message : String(err)
     const errStack = err instanceof Error ? (err.stack ?? null) : null
-
     const maxRetries = job.maxRetries ?? 2
     const newRetries = bullJob.attemptsMade + 1
 
@@ -146,37 +230,152 @@ async function dispatch(bullJob: Job<QueuePayload>): Promise<void> {
       }).catch(console.error)
     }
 
-    throw err // Let BullMQ handle its own retry/fail tracking
+    throw err
   }
 }
 
-// ── Worker ────────────────────────────────────────────────────────────────────
+// ── Distribution dispatcher ───────────────────────────────────────────────────
 
-const worker = getWorker(dispatch)
+async function dispatchDistribution(bullJob: BullJob<DistributePayload>): Promise<void> {
+  const { distributionId, tenantId } = bullJob.data
 
-worker.on('active', (job) => {
-  console.log(`fantom-worker: job ${job.id} (${job.name}) started`)
-})
+  const dist = await getDistributionRow(distributionId, tenantId)
+  if (!dist) throw new Error(`Distribution ${distributionId} not found in DB`)
 
-worker.on('completed', (job) => {
-  console.log(`fantom-worker: job ${job.id} (${job.name}) completed`)
-})
+  const kind = dist.destinationKind as DestinationKind
 
-worker.on('failed', (job, err) => {
-  console.error(`fantom-worker: job ${job?.id} (${job?.name}) failed — ${err.message}`)
-})
+  await patchDistribution(distributionId, tenantId, {
+    status: 'processing',
+    startedAt: new Date(),
+  })
 
-worker.on('error', (err) => {
-  console.error('fantom-worker: worker error', err)
-})
+  const provider = distributionBus.resolve(kind)
+  console.log(
+    `fantom-worker: distribution ${distributionId} (${kind}) → provider: ${provider.name}`,
+  )
 
-console.log('fantom-worker listening on queue fantom-render, ready')
+  // Load the output asset to build DistributionContext
+  const asset = await getAssetRow(dist.assetId, tenantId)
+  if (!asset) throw new Error(`Asset ${dist.assetId} not found for distribution ${distributionId}`)
+
+  const context: DistributionContext = {
+    distributionId,
+    tenantId,
+    jobId: dist.jobId,
+    asset: {
+      id: asset.id,
+      publicUrl: getPublicUrl(asset.r2Key),
+      width: asset.width,
+      height: asset.height,
+      durationSeconds: asset.durationSeconds != null ? Number(asset.durationSeconds) : null,
+      sizeBytes: Number(asset.sizeBytes),
+      mimeType: asset.mimeType,
+      originalFilename: asset.originalFilename,
+    },
+    config: dist.config as Record<string, unknown>,
+    onProgress: async (progress, label) => {
+      await patchDistribution(distributionId, tenantId, {}).catch(console.error)
+      console.log(`[dist:${distributionId}] progress ${progress}%${label ? ` — ${label}` : ''}`)
+    },
+    checkCancelled: async () => {
+      const row = await getDistributionRow(distributionId, tenantId)
+      if (row?.status === 'cancelled') throw new DistributionCancelledError()
+    },
+    log: (msg, data) => {
+      const extra = data ? ` ${JSON.stringify(data)}` : ''
+      console.log(`[dist:${distributionId}] ${msg}${extra}`)
+    },
+  }
+
+  // Call lifecycle hooks if defined
+  await provider.onStart?.(context)
+
+  try {
+    const result = await provider.publish(context)
+
+    await provider.onComplete?.(context, result)
+
+    await patchDistribution(distributionId, tenantId, {
+      status: 'completed',
+      externalId: result.externalId ?? null,
+      externalUrl: result.externalUrl ?? null,
+      responsePayload: result.responsePayload ?? null,
+      completedAt: new Date(),
+    })
+
+    console.log(`[dist:${distributionId}] completed → ${kind}`)
+  } catch (err) {
+    await provider.onError?.(context, err instanceof Error ? err : new Error(String(err)))
+
+    if (err instanceof DistributionCancelledError) {
+      console.log(`[dist:cancelled] distribution ${distributionId} — not retrying`)
+      return
+    }
+
+    const errMessage = err instanceof Error ? err.message : String(err)
+    const errStack = err instanceof Error ? (err.stack ?? null) : null
+
+    const maxRetries = dist.maxRetries ?? 3
+    const newRetries = bullJob.attemptsMade + 1
+
+    // WebhookRetryableError and generic errors are retried.
+    // Non-retryable webhook errors (4xx) are marked failed immediately.
+    const isRetryable =
+      err instanceof WebhookRetryableError ||
+      (!(err instanceof Error) || !errMessage.includes('not retrying'))
+
+    if (isRetryable && newRetries < maxRetries) {
+      await patchDistribution(distributionId, tenantId, {
+        status: 'queued',
+        retries: newRetries,
+        errorMessage: errMessage,
+      }).catch(console.error)
+      throw err // Let BullMQ schedule the retry
+    } else {
+      await patchDistribution(distributionId, tenantId, {
+        status: 'failed',
+        retries: newRetries,
+        errorMessage: errMessage,
+        errorStack: errStack,
+      }).catch(console.error)
+      throw err
+    }
+  }
+}
+
+// ── BullMQ workers ────────────────────────────────────────────────────────────
+
+const renderWorker = getWorker(dispatchRender)
+const distributeWorker = getDistributeWorker(dispatchDistribution)
+
+for (const [label, w] of [
+  ['render', renderWorker],
+  ['distribute', distributeWorker],
+] as const) {
+  w.on('active', (job) => {
+    console.log(`fantom-worker[${label}]: job ${job.id} (${job.name}) started`)
+  })
+  w.on('completed', (job) => {
+    console.log(`fantom-worker[${label}]: job ${job.id} (${job.name}) completed`)
+  })
+  w.on('failed', (job, err) => {
+    console.error(
+      `fantom-worker[${label}]: job ${job?.id} (${job?.name}) failed — ${err.message}`,
+    )
+  })
+  w.on('error', (err) => {
+    console.error(`fantom-worker[${label}]: worker error`, err)
+  })
+}
+
+console.log('fantom-worker listening on queues fantom-render + fantom-distribute, ready')
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`fantom-worker: ${signal} received — shutting down gracefully`)
-  await worker.close()
+  await renderWorker.close()
+  await distributeWorker.close()
   await pool.end()
   console.log('fantom-worker: shutdown complete')
   process.exit(0)
