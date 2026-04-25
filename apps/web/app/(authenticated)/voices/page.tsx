@@ -103,7 +103,7 @@ function SynthesizePanel({ voiceId, voiceName }: { voiceId: string; voiceName: s
           <p className="text-xs text-fantom-text-muted">
             Synthesized: <span className="text-fantom-text">{result.originalFilename}</span>
           </p>
-          <audio controls src={result.publicUrl} className="w-full">
+          <audio controls autoPlay src={result.publicUrl} className="w-full">
             <track kind="captions" />
           </audio>
         </div>

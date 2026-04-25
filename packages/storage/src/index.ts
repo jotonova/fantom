@@ -37,7 +37,9 @@ function bucketName(): string {
 }
 
 function publicBaseUrl(): string {
-  return env('R2_PUBLIC_URL').replace(/\/$/, '')
+  return env('R2_PUBLIC_URL')
+    .replace(/^https?:\/\//, '')
+    .replace(/\/$/, '')
 }
 
 function sanitizeFilename(filename: string): string {
@@ -75,7 +77,7 @@ export async function generateUploadUrl(
 }
 
 export function getPublicUrl(r2Key: string): string {
-  return `${publicBaseUrl()}/${r2Key}`
+  return `https://${publicBaseUrl()}/${r2Key}`
 }
 
 export async function deleteObject(r2Key: string): Promise<void> {
