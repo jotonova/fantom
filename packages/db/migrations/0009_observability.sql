@@ -1,11 +1,8 @@
--- F9: Observability — event log, alert throttle, platform_admin role, admin RLS policies.
+-- F9b: Observability — event log, alert throttle, RLS policies, platform_admin seed.
+-- Runs after 0008_platform_admin_enum.sql has committed, so 'platform_admin' is
+-- safe to reference in the UPDATE below.
 
--- Step 1: Extend tenant_user_role enum with platform_admin.
--- PostgreSQL 14+ supports ADD VALUE inside a transaction and using the value in the same
--- transaction. Render uses pg 15 so this is safe.
-ALTER TYPE "tenant_user_role" ADD VALUE IF NOT EXISTS 'platform_admin';--> statement-breakpoint
-
--- Step 2: Severity enum for structured event log.
+-- Step 1: Severity enum for structured event log.
 CREATE TYPE "event_severity" AS ENUM (
   'debug',
   'info',
@@ -14,7 +11,7 @@ CREATE TYPE "event_severity" AS ENUM (
   'critical'
 );--> statement-breakpoint
 
--- Step 3: events table — structured operator-visible event log.
+-- Step 2: events table — structured operator-visible event log.
 -- tenant_id SET NULL on tenant delete to preserve events for audit purposes.
 CREATE TABLE "events" (
   "id"              uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -35,8 +32,8 @@ CREATE INDEX "events_severity_created_at_idx" ON "events" ("severity", "created_
 CREATE INDEX "events_kind_created_at_idx" ON "events" ("kind", "created_at" DESC);--> statement-breakpoint
 CREATE INDEX "events_subject_idx" ON "events" ("subject_type", "subject_id");--> statement-breakpoint
 
--- Step 4: alert_throttle table — per-tenant per-kind alert rate limiting.
--- No RLS (operator-internal; only the worker reads/writes this table).
+-- Step 3: alert_throttle table — per-tenant per-kind alert rate limiting.
+-- No RLS (operator-internal; only the API/worker reads/writes this table).
 CREATE TABLE "alert_throttle" (
   "id"                uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "tenant_id"         uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
@@ -47,7 +44,7 @@ CREATE TABLE "alert_throttle" (
   CONSTRAINT "alert_throttle_tenant_kind_day" UNIQUE ("tenant_id", "event_kind", "day_key")
 );--> statement-breakpoint
 
--- Step 5: RLS on events table.
+-- Step 4: RLS on events table.
 ALTER TABLE "events" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 
 -- Tenant users see their own events at severity <= 'warn' (no error/critical stacks).
@@ -74,9 +71,9 @@ CREATE POLICY "events_insert" ON "events"
   TO app_user
   WITH CHECK (true);--> statement-breakpoint
 
--- Step 6: Admin SELECT policies on existing tables.
--- These OR with the existing isolation policies so platform admins (with
--- app.is_platform_admin = 'true') can query across all tenants for the /admin dashboard.
+-- Step 5: Admin SELECT policies on existing tables.
+-- These OR with the existing isolation policies so platform admins
+-- (app.is_platform_admin = 'true') can query across all tenants.
 
 CREATE POLICY "jobs_admin_select" ON "jobs"
   AS PERMISSIVE
@@ -102,12 +99,14 @@ CREATE POLICY "tenants_admin_select" ON "tenants"
   TO app_user
   USING (current_setting('app.is_platform_admin', true) = 'true');--> statement-breakpoint
 
--- Step 7: Grants for app_user.
+-- Step 6: Grants for app_user.
 GRANT SELECT, INSERT ON "events" TO app_user;--> statement-breakpoint
 GRANT SELECT, INSERT, UPDATE, DELETE ON "alert_throttle" TO app_user;--> statement-breakpoint
 
--- Step 8: Promote Justin to platform_admin.
--- This is idempotent — safe to re-run after seed.
+-- Step 7: Promote Justin to platform_admin.
+-- Safe to reference 'platform_admin' here because 0008_platform_admin_enum.sql
+-- committed that enum value in its own transaction before this migration runs.
+-- Idempotent — safe to re-run.
 UPDATE "tenant_users"
 SET "role" = 'platform_admin'
-WHERE "user_id" = (SELECT "id" FROM "users" WHERE "email" = 'novacor.icaz@gmail.com');--> statement-breakpoint
+WHERE "user_id" = (SELECT "id" FROM "users" WHERE "email" = 'novacor.icaz@gmail.com');

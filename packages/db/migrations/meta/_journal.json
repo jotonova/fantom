@@ -62,7 +62,14 @@
       "idx": 8,
       "version": "7",
       "when": 1777500000000,
-      "tag": "0008_observability",
+      "tag": "0008_platform_admin_enum",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1777500001000,
+      "tag": "0009_observability",
       "breakpoints": true
     }
   ]
