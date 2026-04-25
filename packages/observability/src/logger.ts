@@ -62,11 +62,16 @@ async function _insert(params: LogEventParams): Promise<LogEventResult> {
 
   let inserted: (typeof events.$inferSelect) | undefined
 
+  // DIAGNOSTIC — remove after RLS root cause confirmed
+  console.log('[observability:diag] _insert tenantId=', JSON.stringify(tenantId), 'branch=', tenantId ? 'tenant' : 'system')
+
   if (tenantId) {
     // Tenant-scoped insert: set GUC so the INSERT RLS policy can validate
     // tenant_id::text = current_setting('app.current_tenant_id', true).
     const [row] = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+      const gucResult = await tx.execute<{ guc: string }>(sql`SELECT current_setting('app.current_tenant_id', true) AS guc`)
+      console.log('[observability:diag] tenant branch GUC=', JSON.stringify(gucResult.rows[0]?.guc), 'values.tenantId=', JSON.stringify(values.tenantId))
       return tx.insert(events).values(values).returning()
     })
     inserted = row
@@ -76,6 +81,8 @@ async function _insert(params: LogEventParams): Promise<LogEventResult> {
     // the policy's current_setting() call never sees a missing-GUC error.
     const [row] = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT set_config('app.current_tenant_id', '', true)`)
+      const gucResult = await tx.execute<{ guc: string }>(sql`SELECT current_setting('app.current_tenant_id', true) AS guc`)
+      console.log('[observability:diag] system branch GUC=', JSON.stringify(gucResult.rows[0]?.guc), 'values.tenantId=', JSON.stringify(values.tenantId))
       return tx.insert(events).values(values).returning()
     })
     inserted = row
