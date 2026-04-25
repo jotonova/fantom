@@ -423,6 +423,56 @@ For any commit that doesn't change apps/web or packages/shared but should still 
 
 ---
 
+## Decision #008 — F6 Polish: Cooperative Mid-Flight Cancellation and Job Deletion
+
+**Date:** 2026-04-25
+**Status:** Adopted
+**Context:** F6 polish pass adds two quality-of-life features to the job pipeline.
+
+### Choice A: Cooperative cancellation (worker polls DB) rather than aggressive (signal-based)
+
+**Decision:** The API sets `status = 'cancelled'` in the DB immediately. The worker detects
+cancellation by polling the DB every 2 seconds during ffmpeg and checking once between each
+earlier step. On detection it aborts ffmpeg via `AbortController → SIGTERM` and throws
+`CancelledError`, which the dispatcher catches and swallows (resolves cleanly to BullMQ).
+
+**Why not aggressive (kill the BullMQ job / send OS signal to worker process)?**
+- BullMQ doesn't expose a mechanism to send a signal to an already-running job's OS process from
+  outside that process without forking a separate kill-signal channel (e.g. Redis pub/sub).
+- Killing the worker process directly would affect all concurrently running jobs, not just the one
+  being cancelled.
+- DB polling is already the established communication channel between API and worker. Reusing it
+  for cancellation keeps the architecture simple and decoupled — the API doesn't need to know
+  which worker host is running the job.
+- Polling at 2 s during ffmpeg means worst-case cancellation latency is ~2 s, which is acceptable
+  for a background render job.
+
+**Consequences:**
+- The worker cleans up its own temp files via the existing `finally` block — no orphaned `/tmp`
+  files even on mid-flight cancellation.
+- `CancelledError` is a named export so the dispatcher can distinguish it from real failures,
+  avoiding spurious retry increments or `status = 'failed'` records.
+
+### Choice B: Delete job record, preserve output asset
+
+**Decision:** `DELETE /jobs/:id` removes the job row but does not touch `output_asset_id` or
+the referenced asset record. `POST /jobs/bulk-delete` extends this to batch operations.
+
+**Why preserve the asset?**
+- A user may want to delete the clutter of old job records from the history view while still
+  keeping the rendered video in their Library.
+- The asset record is independently useful — it appears in `/library`, has its own R2 key, and
+  could be referenced by future features (playlists, reposts, analytics).
+- Separation of concerns: job records are pipeline execution history; assets are content. Deleting
+  history should not silently destroy content.
+
+**Why require terminal status before delete?**
+- Deleting a queued or processing job without cancelling first would orphan the BullMQ entry and
+  leave the worker operating on a job row that no longer exists, causing confusing errors.
+- Forcing `cancel → then delete` creates a clear, auditable state machine.
+
+---
+
 ### ⚠️ MANDATORY ROTATION TRIGGER
 
 > **Before any external user (non-Justin, non-Amy) is added to Fantom, the following MUST happen:**

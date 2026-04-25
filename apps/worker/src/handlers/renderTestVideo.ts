@@ -12,6 +12,15 @@ const _require = createRequire(import.meta.url)
 const ffmpegBinary = _require('ffmpeg-static') as string | null
 if (ffmpegBinary) Ffmpeg.setFfmpegPath(ffmpegBinary)
 
+// ── Cancellation ──────────────────────────────────────────────────────────────
+
+export class CancelledError extends Error {
+  constructor() {
+    super('Job was cancelled')
+    this.name = 'CancelledError'
+  }
+}
+
 // ── Input type ────────────────────────────────────────────────────────────────
 
 interface RenderTestVideoInput {
@@ -46,6 +55,11 @@ async function patchJob(
 
 async function setProgress(jobId: string, tenantId: string, pct: number): Promise<void> {
   await patchJob(jobId, tenantId, { progress: Math.min(Math.max(0, pct), 100) })
+}
+
+async function checkCancelled(jobId: string, tenantId: string): Promise<void> {
+  const row = await getJobRow(jobId, tenantId)
+  if (row?.status === 'cancelled') throw new CancelledError()
 }
 
 async function getAssetRow(assetId: string, tenantId: string): Promise<Asset | undefined> {
@@ -114,10 +128,12 @@ function runFfmpeg(
   audioPath: string,
   outputPath: string,
   onProgress: (pct: number) => void,
+  signal?: AbortSignal,
 ): Promise<number | null> {
   return new Promise((resolve, reject) => {
     let durationSeconds: number | null = null
     let lastTimemark = '00:00:00.00'
+    let killed = false
 
     const command = Ffmpeg()
       .input(imagePath)
@@ -141,6 +157,13 @@ function runFfmpeg(
       .fps(30)
       .output(outputPath)
 
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        killed = true
+        command.kill('SIGTERM')
+      }, { once: true })
+    }
+
     command.on('progress', (progress) => {
       if (progress.timemark) lastTimemark = progress.timemark
       onProgress(progress.percent ?? 0)
@@ -160,7 +183,11 @@ function runFfmpeg(
     })
 
     command.on('error', (err) => {
-      reject(new Error(`ffmpeg failed: ${err.message}`))
+      if (killed) {
+        reject(new CancelledError())
+      } else {
+        reject(new Error(`ffmpeg failed: ${err.message}`))
+      }
     })
 
     command.run()
@@ -216,6 +243,7 @@ export async function renderTestVideoHandler(opts: {
 
     // Mark as processing
     await patchJob(jobId, tenantId, { status: 'processing', startedAt: new Date() })
+    await checkCancelled(jobId, tenantId)
 
     // ── Step 2: Fetch voice clone and image asset ──────────────────────────────
 
@@ -251,6 +279,7 @@ export async function renderTestVideoHandler(opts: {
       return buf.byteLength
     })
     logMem('after-synthesize')
+    await checkCancelled(jobId, tenantId)
 
     // ── Step 4: Stream audio from disk to R2 ──────────────────────────────────
 
@@ -268,6 +297,7 @@ export async function renderTestVideoHandler(opts: {
     console.log(`fantom-worker: audio asset created ${audioAsset.id}`)
 
     await setProgress(jobId, tenantId, 30)
+    await checkCancelled(jobId, tenantId)
 
     // ── Step 5: Stream image from R2 directly to disk (no Buffer in heap) ─────
 
@@ -286,19 +316,36 @@ export async function renderTestVideoHandler(opts: {
     logMem('after-r2-get-image')
 
     await setProgress(jobId, tenantId, 40)
+    await checkCancelled(jobId, tenantId)
 
     // ── Step 6: Run ffmpeg (image + audio → MP4, 720p) ────────────────────────
 
     logMem('before-ffmpeg')
-    const durationSeconds = await runFfmpeg(
-      tmpImageWithExt,
-      tmpAudio,
-      tmpOutput,
-      (pct) => {
-        const dbPct = Math.floor(40 + pct * 0.5)
-        setProgress(jobId, tenantId, Math.min(dbPct, 90)).catch(console.error)
-      },
-    )
+
+    // Poll DB every 2 s during encoding — abort and surface CancelledError if status changed
+    const ffmpegAbort = new AbortController()
+    const ffmpegPollInterval = setInterval(() => {
+      void getJobRow(jobId, tenantId).then((row) => {
+        if (row?.status === 'cancelled') ffmpegAbort.abort()
+      }).catch(console.error)
+    }, 2000)
+
+    let durationSeconds: number | null
+    try {
+      durationSeconds = await runFfmpeg(
+        tmpImageWithExt,
+        tmpAudio,
+        tmpOutput,
+        (pct) => {
+          const dbPct = Math.floor(40 + pct * 0.5)
+          setProgress(jobId, tenantId, Math.min(dbPct, 90)).catch(console.error)
+        },
+        ffmpegAbort.signal,
+      )
+    } finally {
+      clearInterval(ffmpegPollInterval)
+    }
+
     logMem('after-ffmpeg')
 
     await setProgress(jobId, tenantId, 90)
@@ -336,6 +383,15 @@ export async function renderTestVideoHandler(opts: {
       completedAt: new Date(),
     })
   } catch (err) {
+    // ── Cancelled mid-flight ───────────────────────────────────────────────────
+    // DB already shows 'cancelled' (set by the API). Skip retry logic; let the
+    // dispatcher swallow the error so BullMQ marks the job completed cleanly.
+
+    if (err instanceof CancelledError) {
+      console.log(`[job:cancelled] job ${jobId} cancelled mid-flight — cleaning up`)
+      throw err
+    }
+
     // ── Error handling with retry logic ────────────────────────────────────────
 
     const errMessage = err instanceof Error ? err.message : String(err)

@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../../../src/lib/api-client'
-import { Button, Card, Spinner } from '@fantom/ui'
+import {
+  Button,
+  Card,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  Spinner,
+} from '@fantom/ui'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -38,6 +47,12 @@ interface ImageAsset {
   originalFilename: string
   publicUrl: string
 }
+
+type BulkDeleteFilter = 'failed' | 'completed' | 'cancelled' | 'all-terminal'
+
+type DeleteConfirm =
+  | { kind: 'single'; id: string }
+  | { kind: 'bulk'; filter: BulkDeleteFilter; count: number }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 
@@ -101,14 +116,20 @@ function kindLabel(kind: string): string {
 
 // ── Job row ───────────────────────────────────────────────────────────────────
 
+const TERMINAL_STATUSES: readonly JobStatus[] = ['completed', 'failed', 'cancelled']
+
 function JobRow({
   job,
+  cancelling,
   onCancel,
   onRetry,
+  onDelete,
 }: {
   job: RenderJob
+  cancelling: boolean
   onCancel: (id: string) => void
   onRetry: (id: string) => void
+  onDelete: (id: string) => void
 }) {
   const [busy, setBusy] = useState(false)
 
@@ -122,6 +143,9 @@ function JobRow({
     try { await onRetry(job.id) } finally { setBusy(false) }
   }
 
+  const isCancellable = job.status === 'pending' || job.status === 'queued' || job.status === 'processing'
+  const isTerminal = TERMINAL_STATUSES.includes(job.status)
+
   return (
     <div className="flex items-center gap-4 rounded-[6px] border border-fantom-steel-border bg-fantom-steel-lighter p-4">
       {/* ID + kind */}
@@ -131,11 +155,17 @@ function JobRow({
             {job.id.slice(-8)}
           </span>
           <span className="text-sm text-fantom-text">{kindLabel(job.kind)}</span>
-          <StatusBadge status={job.status} />
+          {cancelling ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-fantom-steel-border px-2 py-0.5 text-xs font-medium text-fantom-text-muted">
+              <Spinner size="sm" /> Cancelling…
+            </span>
+          ) : (
+            <StatusBadge status={job.status} />
+          )}
         </div>
 
         {/* Progress bar for processing jobs */}
-        {job.status === 'processing' && (
+        {job.status === 'processing' && !cancelling && (
           <div className="mt-2">
             <ProgressBar value={job.progress} />
             <p className="mt-1 text-xs text-fantom-text-muted">{job.progress}%</p>
@@ -161,14 +191,30 @@ function JobRow({
             View video
           </Button>
         )}
-        {(job.status === 'pending' || job.status === 'queued') && (
-          <Button size="sm" variant="ghost" onClick={() => void cancel()} disabled={busy}>
+        {isCancellable && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void cancel()}
+            disabled={busy || cancelling}
+          >
             {busy ? <Spinner size="sm" /> : 'Cancel'}
           </Button>
         )}
         {job.status === 'failed' && (
           <Button size="sm" variant="ghost" onClick={() => void retry()} disabled={busy}>
             {busy ? <Spinner size="sm" /> : 'Retry'}
+          </Button>
+        )}
+        {isTerminal && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onDelete(job.id)}
+            disabled={busy}
+            className="text-fantom-text-muted/60 hover:text-red-400"
+          >
+            Delete
           </Button>
         )}
       </div>
@@ -316,6 +362,9 @@ function NewJobPanel({ onCreated }: { onCreated: (job: RenderJob) => void }) {
 export default function JobsPage() {
   const [jobList, setJobList] = useState<RenderJob[]>([])
   const [loading, setLoading] = useState(true)
+  const [cancellingIds, setCancellingIds] = useState<ReadonlySet<string>>(new Set())
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirm | null>(null)
+  const [confirming, setConfirming] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchJobs = useCallback(async () => {
@@ -342,8 +391,17 @@ export default function JobsPage() {
   }
 
   async function handleCancel(id: string) {
-    await apiFetch(`/jobs/${id}/cancel`, { method: 'POST' })
-    await fetchJobs()
+    setCancellingIds((prev) => new Set([...prev, id]))
+    try {
+      await apiFetch(`/jobs/${id}/cancel`, { method: 'POST' })
+      await fetchJobs()
+    } finally {
+      setCancellingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
   }
 
   async function handleRetry(id: string) {
@@ -351,14 +409,80 @@ export default function JobsPage() {
     await fetchJobs()
   }
 
+  function handleDeleteRequest(id: string) {
+    setDeleteConfirm({ kind: 'single', id })
+  }
+
+  function handleBulkDeleteRequest(filter: BulkDeleteFilter) {
+    const statuses: JobStatus[] =
+      filter === 'all-terminal' ? ['completed', 'failed', 'cancelled'] : [filter as JobStatus]
+    const count = jobList.filter((j) => statuses.includes(j.status)).length
+    setDeleteConfirm({ kind: 'bulk', filter, count })
+  }
+
+  async function confirmDelete() {
+    if (!deleteConfirm) return
+    setConfirming(true)
+    try {
+      if (deleteConfirm.kind === 'single') {
+        await apiFetch(`/jobs/${deleteConfirm.id}`, { method: 'DELETE' })
+        setJobList((prev) => prev.filter((j) => j.id !== deleteConfirm.id))
+      } else {
+        await apiFetch<{ deletedCount: number }>('/jobs/bulk-delete', {
+          method: 'POST',
+          body: JSON.stringify({ status: deleteConfirm.filter }),
+        })
+        await fetchJobs()
+      }
+      setDeleteConfirm(null)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setConfirming(false)
+    }
+  }
+
+  const terminalCount = jobList.filter((j) => TERMINAL_STATUSES.includes(j.status)).length
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-semibold text-fantom-text">Render Jobs</h1>
-        <p className="mt-1 text-sm text-fantom-text-muted">
-          Fantom&apos;s render pipeline — turning assets and voices into videos
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-fantom-text">Render Jobs</h1>
+          <p className="mt-1 text-sm text-fantom-text-muted">
+            Fantom&apos;s render pipeline — turning assets and voices into videos
+          </p>
+        </div>
+
+        {/* Cleanup dropdown — only shown when there are terminal jobs */}
+        {terminalCount > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" className="shrink-0 text-fantom-text-muted">
+                Cleanup ▾
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => handleBulkDeleteRequest('failed')}
+                disabled={jobList.filter((j) => j.status === 'failed').length === 0}
+              >
+                Clear failed jobs
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleBulkDeleteRequest('completed')}
+                disabled={jobList.filter((j) => j.status === 'completed').length === 0}
+              >
+                Clear completed jobs
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handleBulkDeleteRequest('all-terminal')}>
+                Clear all finished jobs
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       {/* New job panel */}
@@ -381,10 +505,51 @@ export default function JobsPage() {
             <JobRow
               key={job.id}
               job={job}
+              cancelling={cancellingIds.has(job.id)}
               onCancel={(id) => void handleCancel(id)}
               onRetry={(id) => void handleRetry(id)}
+              onDelete={handleDeleteRequest}
             />
           ))}
+        </div>
+      )}
+
+      {/* Delete confirmation dialog */}
+      {deleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={() => !confirming && setDeleteConfirm(null)}
+        >
+          <div
+            className="mx-4 w-full max-w-sm rounded-fantom border border-fantom-steel-border bg-fantom-steel p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-2 font-semibold text-fantom-text">
+              {deleteConfirm.kind === 'single' ? 'Delete this job?' : `Delete ${deleteConfirm.count} job${deleteConfirm.count === 1 ? '' : 's'}?`}
+            </h2>
+            <p className="mb-6 text-sm text-fantom-text-muted">
+              {deleteConfirm.kind === 'single'
+                ? 'The rendered video (if any) will remain in your Library.'
+                : `${deleteConfirm.count === 0 ? 'No' : deleteConfirm.count} job record${deleteConfirm.count === 1 ? '' : 's'} will be removed. Any rendered videos stay in your Library.`}
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDeleteConfirm(null)}
+                disabled={confirming}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void confirmDelete()}
+                disabled={confirming || (deleteConfirm.kind === 'bulk' && deleteConfirm.count === 0)}
+              >
+                {confirming ? <Spinner size="sm" /> : 'Delete'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

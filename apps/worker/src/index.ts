@@ -4,7 +4,7 @@ import { getWorker, JobKind } from '@fantom/jobs'
 import type { QueuePayload } from '@fantom/jobs'
 import type { Job } from 'bullmq'
 import { sql } from 'drizzle-orm'
-import { renderTestVideoHandler } from './handlers/renderTestVideo.js'
+import { renderTestVideoHandler, CancelledError } from './handlers/renderTestVideo.js'
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
@@ -30,12 +30,22 @@ try {
 async function dispatch(bullJob: Job<QueuePayload>): Promise<void> {
   const { jobId, tenantId } = bullJob.data
 
-  switch (bullJob.name) {
-    case JobKind.RENDER_TEST_VIDEO:
-      await renderTestVideoHandler({ jobId, tenantId, attemptsMade: bullJob.attemptsMade })
-      break
-    default:
-      throw new Error(`Job kind '${bullJob.name}' is not yet implemented`)
+  try {
+    switch (bullJob.name) {
+      case JobKind.RENDER_TEST_VIDEO:
+        await renderTestVideoHandler({ jobId, tenantId, attemptsMade: bullJob.attemptsMade })
+        break
+      default:
+        throw new Error(`Job kind '${bullJob.name}' is not yet implemented`)
+    }
+  } catch (err) {
+    if (err instanceof CancelledError) {
+      // DB already shows 'cancelled'. Resolve cleanly so BullMQ marks the job
+      // completed rather than failed, and doesn't schedule a retry.
+      console.log(`[job:cancelled] bull job ${bullJob.id} (${bullJob.name}) — not retrying`)
+      return
+    }
+    throw err
   }
 }
 

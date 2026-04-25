@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm'
 import fp from 'fastify-plugin'
 import type { FastifyPluginAsync } from 'fastify'
 import { db, jobs, assets, tenants, voiceClones } from '@fantom/db'
@@ -234,11 +234,11 @@ const jobRoutes: FastifyPluginAsync = async (fastify) => {
       })
 
       if (!job) return reply.code(404).send({ error: 'Job not found' })
-      if (job.status !== 'pending' && job.status !== 'queued') {
-        return reply.code(409).send({ error: 'Only pending or queued jobs can be cancelled' })
+      if (job.status !== 'pending' && job.status !== 'queued' && job.status !== 'processing') {
+        return reply.code(409).send({ error: 'Only pending, queued, or processing jobs can be cancelled' })
       }
 
-      // Remove from BullMQ queue (best-effort)
+      // Remove from BullMQ queue (best-effort; no-op for processing jobs already running)
       try {
         const bullJob = await getQueue().getJob(id)
         if (bullJob) await bullJob.remove()
@@ -316,6 +316,67 @@ const jobRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(err, 'Failed to re-enqueue job')
         return reply.send({ ...updated, outputAsset: null })
       }
+    },
+  )
+  // DELETE /jobs/:id ───────────────────────────────────────────────────────────
+  fastify.delete<{ Params: { id: string } }>(
+    '/jobs/:id',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { id } = request.params
+      const tenantId = request.tenantId!
+
+      const job = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        const [row] = await tx.select().from(jobs).where(eq(jobs.id, id)).limit(1)
+        return row
+      })
+
+      if (!job) return reply.code(404).send({ error: 'Job not found' })
+
+      const TERMINAL: readonly JobStatus[] = ['completed', 'failed', 'cancelled']
+      if (!TERMINAL.includes(job.status)) {
+        return reply.code(400).send({ error: 'Cancel the job first before deleting' })
+      }
+
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        await tx.delete(jobs).where(eq(jobs.id, id))
+      })
+
+      return reply.code(204).send()
+    },
+  )
+
+  // POST /jobs/bulk-delete ──────────────────────────────────────────────────────
+  fastify.post<{ Body: { status: 'failed' | 'completed' | 'cancelled' | 'all-terminal' } }>(
+    '/jobs/bulk-delete',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { status } = request.body ?? {}
+      const tenantId = request.tenantId!
+
+      const VALID_FILTERS = ['failed', 'completed', 'cancelled', 'all-terminal'] as const
+      if (!(VALID_FILTERS as readonly string[]).includes(status)) {
+        return reply
+          .code(400)
+          .send({ error: 'status must be one of: failed, completed, cancelled, all-terminal' })
+      }
+
+      const statusCondition =
+        status === 'all-terminal'
+          ? or(eq(jobs.status, 'completed'), eq(jobs.status, 'failed'), eq(jobs.status, 'cancelled'))
+          : eq(jobs.status, status)
+
+      const deleted = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        return tx
+          .delete(jobs)
+          .where(and(eq(jobs.tenantId, tenantId), statusCondition))
+          .returning({ id: jobs.id })
+      })
+
+      return reply.send({ deletedCount: deleted.length })
     },
   )
 }
