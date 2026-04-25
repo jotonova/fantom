@@ -115,6 +115,9 @@ importers:
       '@fantom/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+      '@fantom/render-bus':
+        specifier: workspace:*
+        version: link:../../packages/render-bus
       '@fantom/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -191,6 +194,19 @@ importers:
       ioredis:
         specifier: ^5.3.0
         version: 5.10.1
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.39
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
+  packages/render-bus:
+    dependencies:
+      '@fantom/db':
+        specifier: workspace:*
+        version: link:../db
     devDependencies:
       '@types/node':
         specifier: ^20.0.0

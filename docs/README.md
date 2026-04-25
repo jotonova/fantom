@@ -52,7 +52,7 @@ pnpm --filter @fantom/db db:seed
 
 ```bash
 # Build shared packages first, then start apps
-pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build
+pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build
 pnpm dev
 # Worker dev (in a separate terminal, requires local Redis)
 pnpm --filter @fantom/worker dev
@@ -83,6 +83,7 @@ fantom/
     ├── config/   # Shared TS/ESLint/Prettier configs
     ├── db/       # Drizzle schema, migrations, singleton client
     ├── jobs/     # @fantom/jobs — BullMQ queue + worker factory
+    ├── render-bus/ # @fantom/render-bus — strategy pattern for render providers
     ├── shared/   # Shared TypeScript types
     ├── storage/  # @fantom/storage — Cloudflare R2 client
     ├── ui/       # @fantom/ui — React component library

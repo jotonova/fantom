@@ -478,6 +478,81 @@ the referenced asset record. `POST /jobs/bulk-delete` extends this to batch oper
 
 ---
 
+## Decision #009 — F7 Render Bus: Strategy Pattern for Render Providers
+
+**Context:** F6 shipped a single render pipeline hardcoded in `renderTestVideoHandler.ts`. As the
+platform expands to new job kinds and potentially new render engines (Remotion, CapCut API), the
+switch-case dispatcher would grow unwieldy and changes to one provider would risk touching
+unrelated code.
+
+**Decision:** Introduce `packages/render-bus` — a new workspace package that implements the
+Strategy pattern for render providers. The worker dispatcher no longer switches on job kind;
+instead it calls `bus.resolve(kind, preferred?)` to get the right provider and invokes
+`provider.render(context)`.
+
+### Choice A: Package location — `packages/render-bus` vs inside `apps/worker`
+
+**Decision:** Separate workspace package.
+
+**Why not inside the worker?**
+- The `RenderProvider` interface and `CancelledError` are types that any future service
+  (e.g. a second worker for a different region, a test harness) might need to import.
+- Keeping the interface in a package makes it importable without depending on the full worker
+  application.
+- It follows the existing monorepo pattern: infrastructure concepts live in `packages/`, app
+  startup logic lives in `apps/`.
+
+### Choice B: Provider file location — `apps/worker/src/providers/` vs inside `packages/render-bus`
+
+**Decision:** Providers live in `apps/worker/src/providers/`, not inside the package.
+
+**Why?**
+- Providers have heavy runtime dependencies: `fluent-ffmpeg`, `ffmpeg-static`, `@fantom/voice`,
+  `@fantom/storage`. These belong at the app layer, not in a shared interface package.
+- The `render-bus` package only exports the interface (`RenderProvider`), the context/result
+  types, `CancelledError`, and the `RenderBus` registry. It has no runtime dependencies beyond
+  `@fantom/db` (for the `JobKind` type).
+- If a second worker app were created, it would implement its own providers and register them
+  with its own bus instance — not import ours.
+
+### Choice C: CancelledError location — handler vs render-bus
+
+**Decision:** `CancelledError` moves from `renderTestVideoHandler.ts` to `@fantom/render-bus`.
+
+**Why?**
+- `CancelledError` is a cross-cutting concern: it must be recognized by both provider code
+  (thrown when cancellation is detected) and the dispatcher (caught to resolve cleanly vs retry).
+- Defining it in the interface package makes it the single canonical class — no risk of
+  `instanceof` checks failing due to multiple class definitions.
+
+### Choice D: Retry logic location — provider vs dispatcher
+
+**Decision:** Retry logic (read maxRetries, patchJob to 'queued' or 'failed') lives in the
+dispatcher (`apps/worker/src/index.ts`), not inside providers.
+
+**Why?**
+- Retry behavior is a worker infrastructure concern, not a render concern. A provider's job is to
+  render or throw — it has no knowledge of BullMQ attempt counts or DB job rows.
+- Centralizing retry logic means adding a new provider requires zero boilerplate — the dispatcher
+  handles all failure modes uniformly.
+
+### Choice E: Tenant preference lookup — bus.resolve() vs dispatcher
+
+**Decision:** `getPreferredProvider` is called by the dispatcher, which passes the result as the
+optional `preferred` argument to `bus.resolve()`. The bus itself does not read from the DB.
+
+**Why?**
+- Keeps the bus pure: it's a registry + resolver, not an I/O layer.
+- The dispatcher already owns the DB connection lifecycle; adding one more read there is natural.
+- A bus that reads from a DB would be harder to unit-test and would introduce coupling between
+  the strategy router and the persistence layer.
+
+**Stub providers:** `RemotionProvider` and `CapCutProvider` are registered but return
+`canHandle() = false`, so `bus.resolve()` always falls through to `FfmpegProvider` for now.
+When a new provider is ready, flip `canHandle` and fill in `render()` — no other files change.
+
+---
+
 ### ⚠️ MANDATORY ROTATION TRIGGER
 
 > **Before any external user (non-Justin, non-Amy) is added to Fantom, the following MUST happen:**

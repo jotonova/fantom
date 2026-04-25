@@ -14,6 +14,7 @@ fantom/
     ├── config/   # Shared TypeScript, ESLint, Prettier configs
     ├── db/       # Drizzle schema, migrations, and singleton client (@fantom/db)
     ├── jobs/     # @fantom/jobs — BullMQ queue + worker factory
+    ├── render-bus/ # @fantom/render-bus — strategy pattern for render providers
     ├── shared/   # Shared TypeScript types (HealthResponse, etc.)
     ├── storage/  # @fantom/storage — Cloudflare R2 client (S3-compatible)
     ├── ui/       # @fantom/ui — React component library (Radix UI + Tailwind)
@@ -228,14 +229,24 @@ Redis (BullMQ queue: 'fantom-render')
   │
   ▼
 Worker (apps/worker — Render Background Worker)
-  │  1. Dispatch on job.name (kind)
-  │  2. DB read: job input, voice_clone.providerVoiceId, image asset r2Key
-  │  3. status='processing', startedAt=now()
-  │  4. ElevenLabs synthesize(text, voiceId) → audio Buffer        (progress: 10→30)
-  │  5. putObject(audioKey, audioBuffer) + DB asset record
-  │  6. getObjectBuffer(imageKey) → write to /tmp                   (progress: 30→40)
-  │  7. ffmpeg -loop 1 -i image -i audio → MP4 (1920×1080, 30fps)  (progress: 40→90)
-  │  8. putObject(videoKey, videoBuffer) + DB asset record          (progress: 90)
+  │  1. Read job row from DB (kind, input, maxRetries)
+  │  2. status='processing', startedAt=now()
+  │  3. getPreferredProvider(tenantId) → reads tenant_settings 'render.preferred_provider'
+  │  4. RenderBus.resolve(kind, preferred?) → picks provider (FfmpegProvider for all current kinds)
+  │
+  ▼
+FfmpegProvider (apps/worker/src/providers/ffmpegProvider.ts)
+  │  1. DB read: voice_clone.providerVoiceId, image asset r2Key + tenant slug
+  │  2. ElevenLabs synthesize(text, voiceId) → write to /tmp       (progress: 10→30)
+  │  3. putObjectFromFile(audioKey) stream to R2 + DB asset record
+  │  4. getObjectToFile(imageKey) stream from R2 to /tmp            (progress: 30→40)
+  │  5. ffmpeg -loop 1 -i image -i audio → MP4 (1920×1080, 30fps)  (progress: 40→90)
+  │  6. putObjectFromFile(videoKey) stream to R2                    (progress: 90)
+  │  7. returns RenderResult { r2Key, mimeType, sizeBytes, durationSeconds, width, height }
+  │
+  ▼
+Worker dispatcher
+  │  8. createAssetRecord(videoAsset) in DB
   │  9. jobs.output_asset_id = videoAsset.id
   │  10. status='completed', progress=100, completedAt=now()
   │
