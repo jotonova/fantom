@@ -1,5 +1,5 @@
 {
-  "name": "@fantom/api",
+  "name": "@fantom/worker",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,28 +10,23 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@fantom/db": "workspace:*",
     "@fantom/jobs": "workspace:*",
-    "@fantom/shared": "workspace:*",
     "@fantom/storage": "workspace:*",
     "@fantom/voice": "workspace:*",
-    "@fastify/cors": "^9.0.0",
-    "@fastify/jwt": "^8.0.0",
-    "@fastify/rate-limit": "^9.0.0",
-    "bcrypt": "^5.1.0",
+    "bullmq": "^5.0.0",
+    "dotenv": "^16.4.0",
     "drizzle-orm": "^0.38.0",
-    "fastify": "^4.28.0",
-    "fastify-plugin": "^4.5.0",
-    "dotenv": "^16.4.0"
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.3"
   },
   "devDependencies": {
-    "@types/bcrypt": "^5.0.0",
+    "@types/fluent-ffmpeg": "^2.1.27",
+    "@types/node": "^20.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "typescript": "^5.4.0"
   }
 }

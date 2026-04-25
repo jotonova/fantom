@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard', href: '/dashboard' },
   { label: 'Library', href: '/library' },
   { label: 'Voices', href: '/voices' },
+  { label: 'Jobs', href: '/jobs' },
 ]
 
 export default function AuthenticatedLayout({ children }: { children: React.ReactNode }) {

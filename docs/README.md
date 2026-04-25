@@ -52,8 +52,10 @@ pnpm --filter @fantom/db db:seed
 
 ```bash
 # Build shared packages first, then start apps
-pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build
+pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build
 pnpm dev
+# Worker dev (in a separate terminal, requires local Redis)
+pnpm --filter @fantom/worker dev
 ```
 
 ### Dev login credentials
@@ -75,10 +77,12 @@ This starts `next dev` (port 3000) and `tsx watch` (port 3001) in parallel.
 fantom/
 ├── apps/
 │   ├── api/      # Fastify REST API
-│   └── web/      # Next.js 14 frontend
+│   ├── web/      # Next.js 14 frontend
+│   └── worker/   # BullMQ render worker (Render Background Worker)
 └── packages/
     ├── config/   # Shared TS/ESLint/Prettier configs
     ├── db/       # Drizzle schema, migrations, singleton client
+    ├── jobs/     # @fantom/jobs — BullMQ queue + worker factory
     ├── shared/   # Shared TypeScript types
     ├── storage/  # @fantom/storage — Cloudflare R2 client
     ├── ui/       # @fantom/ui — React component library
@@ -111,6 +115,11 @@ fantom/
 | GET    | `/me`             | Bearer   | Current user + tenant data                   |
 | GET    | `/tenants/me`     | Bearer   | Current tenant details                       |
 | GET    | `/auth/debug`     | None     | Echo request.user + tenantId (dev only)      |
+| POST   | `/jobs`           | Bearer   | Create and enqueue a render job              |
+| GET    | `/jobs`           | Bearer   | List tenant jobs (cursor pagination)         |
+| GET    | `/jobs/:id`       | Bearer   | Get single job with output asset URL         |
+| POST   | `/jobs/:id/cancel`| Bearer   | Cancel pending/queued job                    |
+| POST   | `/jobs/:id/retry` | Bearer   | Retry a failed job                           |
 
 ### Smoke test — login → verify → me
 

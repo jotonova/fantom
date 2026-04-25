@@ -2,16 +2,18 @@
 
 ## Monorepo Structure
 
-Fantom is a pnpm workspace monorepo with two apps and three shared packages.
+Fantom is a pnpm workspace monorepo with three apps and shared packages.
 
 ```
 fantom/
 ├── apps/
-│   ├── api/      # Fastify REST API → deployed to Render
-│   └── web/      # Next.js 14 frontend → deployed to Vercel
+│   ├── api/      # Fastify REST API → deployed to Render (Web Service)
+│   ├── web/      # Next.js 14 frontend → deployed to Vercel
+│   └── worker/   # Render job processor → deployed to Render (Background Worker)
 └── packages/
     ├── config/   # Shared TypeScript, ESLint, Prettier configs
     ├── db/       # Drizzle schema, migrations, and singleton client (@fantom/db)
+    ├── jobs/     # @fantom/jobs — BullMQ queue + worker factory
     ├── shared/   # Shared TypeScript types (HealthResponse, etc.)
     ├── storage/  # @fantom/storage — Cloudflare R2 client (S3-compatible)
     ├── ui/       # @fantom/ui — React component library (Radix UI + Tailwind)
@@ -159,13 +161,16 @@ Fantom uses a **shared database, schema-per-tenant-via-RLS** architecture:
 
 ### Tables
 
-| Table             | RLS | Purpose                                           |
-|-------------------|-----|---------------------------------------------------|
-| `tenants`         | ✅  | Top-level tenant entities (slug, name, status)    |
-| `users`           | ❌  | Individual user identities (cross-tenant)         |
-| `tenant_users`    | ✅  | N:N membership with role (owner / editor / viewer)|
-| `tenant_settings` | ✅  | Per-tenant key-value config store (jsonb values)  |
-| `sessions`        | ❌  | Refresh token tracking + revocation (F3)          |
+| Table             | RLS | Purpose                                              |
+|-------------------|-----|------------------------------------------------------|
+| `tenants`         | ✅  | Top-level tenant entities (slug, name, status)       |
+| `users`           | ❌  | Individual user identities (cross-tenant)            |
+| `tenant_users`    | ✅  | N:N membership with role (owner / editor / viewer)   |
+| `tenant_settings` | ✅  | Per-tenant key-value config store (jsonb values)     |
+| `sessions`        | ❌  | Refresh token tracking + revocation (F3)             |
+| `assets`          | ✅  | File library — images, audio, video (R2-backed) (F5) |
+| `voice_clones`    | ✅  | ElevenLabs voice library (F5)                        |
+| `jobs`            | ✅  | Render pipeline job queue — status, progress, I/O (F6)|
 
 `users` and `sessions` are intentionally NOT RLS-restricted. Users are cross-tenant identities; sessions are auth tokens that establish the context RLS depends on (chicken-and-egg).
 
@@ -205,6 +210,58 @@ The owner-role URL is retained as `MIGRATE_DATABASE_URL`, used only by `db:migra
 ### Tenant Resolution
 
 Tenants are resolved by `slug` (e.g. `novacor`). In F2, the slug is provided via the `X-Tenant-Slug` request header. In F3+, it will also be parseable from a subdomain (e.g. `novacor.fantomvid.com`). The stub is in `apps/api/src/plugins/tenant-context.ts`.
+
+## Job Lifecycle (F6)
+
+```
+Browser
+  │
+  │  POST /jobs { kind: 'render_test_video', input: {...} }
+  ▼
+Fastify API
+  │  1. Validate input (voiceCloneId, text, imageAssetId tenant-scoped)
+  │  2. INSERT jobs (status='pending')
+  │  3. BullMQ queue.add() → status='queued'
+  │
+  ▼
+Redis (BullMQ queue: 'fantom-render')
+  │
+  ▼
+Worker (apps/worker — Render Background Worker)
+  │  1. Dispatch on job.name (kind)
+  │  2. DB read: job input, voice_clone.providerVoiceId, image asset r2Key
+  │  3. status='processing', startedAt=now()
+  │  4. ElevenLabs synthesize(text, voiceId) → audio Buffer        (progress: 10→30)
+  │  5. putObject(audioKey, audioBuffer) + DB asset record
+  │  6. getObjectBuffer(imageKey) → write to /tmp                   (progress: 30→40)
+  │  7. ffmpeg -loop 1 -i image -i audio → MP4 (1920×1080, 30fps)  (progress: 40→90)
+  │  8. putObject(videoKey, videoBuffer) + DB asset record          (progress: 90)
+  │  9. jobs.output_asset_id = videoAsset.id
+  │  10. status='completed', progress=100, completedAt=now()
+  │
+  ▼
+Browser polls GET /jobs every 3s → sees status transition
+  └── completed? → "View video" → opens R2 public URL (direct CDN, no API proxy)
+
+On failure:
+  Worker catch block → retries < max_retries (2) → status='queued', BullMQ retries
+                     → retries >= max_retries     → status='failed', errorMessage set
+```
+
+### Job Status Transitions
+
+```
+pending → queued → processing → completed
+                              → failed (retry → queued)
+         → cancelled (from pending or queued only)
+```
+
+### Process Boundary
+
+- **API process**: HTTP handler — validates, inserts to DB, enqueues to Redis. Returns immediately.
+- **Worker process**: Long-running — reads from Redis, runs ffmpeg, writes assets. No HTTP.
+- **Redis**: Queue transport only. Not the source of truth — all durable state is in Postgres.
+- **DB (Postgres)**: Single source of truth for job state, progress, inputs, outputs.
 
 ## Key Design Decisions
 

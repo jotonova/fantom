@@ -19,7 +19,9 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
-      "bcrypt"
+      "bcrypt",
+      "ffmpeg-static",
+      "msgpackr-extract"
     ]
   }
 }

@@ -1,9 +1,11 @@
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
+import type { Readable } from 'node:stream'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { randomUUID } from 'node:crypto'
 
@@ -112,4 +114,15 @@ export async function putObject(
       ContentType: contentType,
     }),
   )
+}
+
+export async function getObjectBuffer(r2Key: string): Promise<Buffer> {
+  const res = await r2.send(new GetObjectCommand({ Bucket: bucketName(), Key: r2Key }))
+  const stream = res.Body as Readable
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = []
+    stream.on('data', (chunk: Buffer) => chunks.push(chunk))
+    stream.on('end', () => resolve(Buffer.concat(chunks)))
+    stream.on('error', reject)
+  })
 }

@@ -371,6 +371,58 @@ For any commit that doesn't change apps/web or packages/shared but should still 
 
 ---
 
+---
+
+## Decision #007 — F6 Job Queue and Render Pipeline
+
+**Date:** 2026-04-24
+**Status:** Adopted
+**Context:** F6 introduces async video rendering. Three foundational choices were made.
+
+### Choice A: BullMQ over Cloudflare Queues, AWS SQS, or Custom-Rolled
+
+**Decision:** BullMQ backed by Render Redis.
+
+**Reasoning:**
+- **Free**: runs on the Redis we already pay for. Cloudflare Queues and AWS SQS are billed per operation.
+- **Mature and TypeScript-first**: BullMQ is the de facto standard for Node.js job queues. Strong typing, battle-tested retry/backoff, built-in concurrency controls.
+- **No new infrastructure**: Cloudflare Queues and SQS require new IAM roles, dashboards, and connection patterns. BullMQ is one npm package on existing Redis.
+- **Custom-rolled alternative** (polling Postgres for jobs) would work at F6 scale but lacks built-in backoff, deduplication, and dead-letter handling.
+
+### Choice B: Separate Worker Service (not in-process on the API)
+
+**Decision:** `apps/worker` is a standalone Render Background Worker, separate from `apps/api`.
+
+**Reasoning:**
+- **API stays responsive**: ffmpeg rendering can take 10–60 seconds per video. Running this in the API request thread would time out clients and block other requests.
+- **Independent scaling**: the worker can be scaled, redeployed, or restarted without touching the API.
+- **12-factor app principle**: processes with different runtime profiles (HTTP vs. long-running CPU work) should be separate processes.
+- **Failure isolation**: a crashing worker doesn't take down the API.
+
+### Choice C: ffmpeg via spawn (not cloud transcoding services)
+
+**Decision:** ffmpeg-static bundled with the worker. No MediaConvert, Mux, or Cloudflare Stream.
+
+**Reasoning:**
+- **Cost**: AWS MediaConvert charges per minute of output (~$0.0075/min for HD). A $7/mo Render Starter worker running ffmpeg locally renders thousands of videos per month at zero marginal cost.
+- **Simplicity**: ffmpeg-static bundles a static binary — no system package installation, no Docker image, no cloud API to authenticate.
+- **Speed**: network round-trips to a cloud transcoder (upload source → transcode → download result) add 30–90 seconds overhead. Local ffmpeg typically completes in 2–5 seconds for test videos.
+
+**Consequences:**
+- Worker CPU spikes during encoding. A Starter tier instance ($7/mo) handles one concurrent job fine; add `concurrency: 2` if queue depth grows.
+- ffmpeg binary (~60 MB) adds to the worker's build size. Acceptable for a background worker.
+
+### Choice D: Polling (not WebSockets) for /jobs page
+
+**Decision:** 3-second interval poll in the browser. WebSocket upgrade deferred to F10.
+
+**Reasoning:**
+- Polling is stateless, survives deploys without reconnect logic, and requires zero server-side infrastructure changes.
+- At F6 volume (one or two renders at a time), a 3-second poll produces negligible API load.
+- WebSockets add real-time UX but require server-sent events or a socket layer, connection management, and reconnect handling — significant complexity for a feature that works fine with polling at this scale.
+
+---
+
 ### ⚠️ MANDATORY ROTATION TRIGGER
 
 > **Before any external user (non-Justin, non-Amy) is added to Fantom, the following MUST happen:**

@@ -218,6 +218,69 @@ Trigger a manual redeploy after adding the vars.
 
 ---
 
+---
+
+## Worker Service — Render Setup
+
+The render worker is a Render **Background Worker** (not a Web Service — it has no HTTP listener). Follow these steps once after the F6 deploy.
+
+### Step 1 — Create the Background Worker
+
+1. Render dashboard → Fantom workspace → **New +** → **Background Worker**
+2. Connect the `jotonova/fantom` GitHub repo, branch `main`
+3. Configure:
+
+   | Field              | Value                                                   |
+   |--------------------|---------------------------------------------------------|
+   | Name               | `fantom-worker`                                         |
+   | Region             | **Oregon (US West)** — must match other services        |
+   | Root Directory     | *(blank — monorepo root)*                               |
+   | Runtime            | Node 20                                                 |
+   | Build Command      | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/worker build` |
+   | Start Command      | `node apps/worker/dist/index.js`                        |
+   | Pre-Deploy Command | *(leave empty — worker does not run migrations)*        |
+   | Instance Type      | **Starter** ($7/mo)                                     |
+
+### Step 2 — Add Environment Variables
+
+Copy all environment variables from `fantom-api`. The worker needs the same set:
+
+| Key                    | Source                                          |
+|------------------------|-------------------------------------------------|
+| `DATABASE_URL`         | Same as fantom-api (app_user connection string) |
+| `REDIS_URL`            | Same as fantom-api (Render Redis internal URL)  |
+| `JWT_SECRET`           | Same as fantom-api                              |
+| `R2_ACCOUNT_ID`        | Same as fantom-api                              |
+| `R2_ACCESS_KEY_ID`     | Same as fantom-api                              |
+| `R2_SECRET_ACCESS_KEY` | Same as fantom-api                              |
+| `R2_BUCKET_NAME`       | Same as fantom-api (`fantom-assets`)            |
+| `R2_PUBLIC_URL`        | Same as fantom-api                              |
+| `ELEVENLABS_API_KEY`   | Same as fantom-api                              |
+
+> **Tip:** In Render's UI you can use **"Copy from another service"** (Settings → Environment → Sync environment variables from...) to copy all vars from `fantom-api` in one step.
+
+### Step 3 — Update the API Build Command
+
+The `fantom-api` build command must now also compile `@fantom/jobs`:
+
+```
+pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/api build
+```
+
+Update this in **Render → fantom-api → Settings → Build & Deploy → Build Command**.
+
+### Step 4 — Deploy and verify
+
+1. Save and deploy the worker service.
+2. Check the worker logs — you should see:
+   ```
+   fantom-worker: database connected
+   fantom-worker listening on queue fantom-render, ready
+   ```
+3. From the Fantom web app, go to `/jobs`, create a test video job, and watch it progress.
+
+---
+
 ## Vercel — Monorepo Quick Reference
 
 > Captured after the F1 deployment saga (see DECISIONS.md — Decision #002 for full context).
