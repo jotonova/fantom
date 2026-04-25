@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { db, jobs, assets, voiceClones, tenants } from '@fantom/db'
 import type { Job as DbJob, Asset } from '@fantom/db'
-import { buildKey, putObject, getObjectBuffer, getPublicUrl } from '@fantom/storage'
+import { buildKey, putObjectFromFile, getObjectToFile, getPublicUrl } from '@fantom/storage'
 import { synthesize } from '@fantom/voice'
 import { eq, sql } from 'drizzle-orm'
 import Ffmpeg from 'fluent-ffmpeg'
@@ -125,6 +125,8 @@ function runFfmpeg(
       .input(audioPath)
       .outputOptions([
         '-c:v', 'libx264',
+        '-preset', 'veryfast',   // lower CPU + memory than default 'medium'
+        '-threads', '1',         // single-threaded — limits peak memory on 512 MB hosts
         '-tune', 'stillimage',
         '-c:a', 'aac',
         '-b:a', '192k',
@@ -133,7 +135,8 @@ function runFfmpeg(
         '-movflags', '+faststart',
       ])
       .videoFilter(
-        'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2',
+        // 720p — ~4× less encoding memory than 1080p
+        'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
       )
       .fps(30)
       .output(outputPath)
@@ -162,6 +165,16 @@ function runFfmpeg(
 
     command.run()
   })
+}
+
+// ── Memory logger ─────────────────────────────────────────────────────────────
+
+function logMem(label: string): void {
+  const m = process.memoryUsage()
+  console.log(
+    `[mem:${label}] rss=${Math.round(m.rss / 1024 / 1024)}MB` +
+    ` heap=${Math.round(m.heapUsed / 1024 / 1024)}/${Math.round(m.heapTotal / 1024 / 1024)}MB`,
+  )
 }
 
 // ── Step wrapper ──────────────────────────────────────────────────────────────
@@ -224,18 +237,25 @@ export async function renderTestVideoHandler(opts: {
 
     const tenantSlug = await getTenantSlug(tenantId)
 
+    logMem('start')
     await setProgress(jobId, tenantId, 10)
 
-    // ── Step 3: Synthesize audio ───────────────────────────────────────────────
+    // ── Step 3: Synthesize audio → write to disk immediately ──────────────────
+    // Buffer is created and written inside the async closure so it exits scope
+    // (and becomes GC-eligible) before R2 upload and ffmpeg begin.
 
-    const audioBuffer = await step('elevenlabs-synthesize', () =>
-      synthesize({ text: input.text, voiceId: providerVoiceId }),
-    )
+    logMem('before-synthesize')
+    const audioSizeBytes = await step('elevenlabs-synthesize', async () => {
+      const buf = await synthesize({ text: input.text, voiceId: providerVoiceId })
+      await fs.writeFile(tmpAudio, buf)
+      return buf.byteLength
+    })
+    logMem('after-synthesize')
 
-    // ── Step 4: Upload audio to R2 as an asset ─────────────────────────────────
+    // ── Step 4: Stream audio from disk to R2 ──────────────────────────────────
 
     const audioKey = buildKey(tenantSlug, 'audio', `job-${jobId}-audio.mp3`)
-    await step('r2-put-audio', () => putObject(audioKey, audioBuffer, 'audio/mpeg'))
+    await step('r2-put-audio', () => putObjectFromFile(audioKey, tmpAudio, 'audio/mpeg'))
 
     const audioAsset = await createAssetRecord({
       tenantId,
@@ -243,21 +263,14 @@ export async function renderTestVideoHandler(opts: {
       r2Key: audioKey,
       originalFilename: `job-${jobId}-audio.mp3`,
       mimeType: 'audio/mpeg',
-      sizeBytes: audioBuffer.byteLength,
+      sizeBytes: audioSizeBytes,
     })
     console.log(`fantom-worker: audio asset created ${audioAsset.id}`)
 
     await setProgress(jobId, tenantId, 30)
 
-    // ── Step 5: Write audio temp file for ffmpeg ───────────────────────────────
+    // ── Step 5: Stream image from R2 directly to disk (no Buffer in heap) ─────
 
-    await fs.writeFile(tmpAudio, audioBuffer)
-
-    // ── Step 6: Download image from R2 ────────────────────────────────────────
-
-    const imageBuffer = await step('r2-get-image', () => getObjectBuffer(imageAsset.r2Key))
-
-    // Determine extension from MIME type
     const extMap: Record<string, string> = {
       'image/jpeg': 'jpg',
       'image/jpg': 'jpg',
@@ -267,12 +280,16 @@ export async function renderTestVideoHandler(opts: {
     }
     const imageExt = extMap[imageAsset.mimeType] ?? 'jpg'
     const tmpImageWithExt = `${tmpImage}.${imageExt}`
-    await fs.writeFile(tmpImageWithExt, imageBuffer)
+
+    logMem('before-r2-get-image')
+    await step('r2-get-image', () => getObjectToFile(imageAsset.r2Key, tmpImageWithExt))
+    logMem('after-r2-get-image')
 
     await setProgress(jobId, tenantId, 40)
 
-    // ── Step 7: Run ffmpeg (image + audio → MP4) ───────────────────────────────
+    // ── Step 6: Run ffmpeg (image + audio → MP4, 720p) ────────────────────────
 
+    logMem('before-ffmpeg')
     const durationSeconds = await runFfmpeg(
       tmpImageWithExt,
       tmpAudio,
@@ -282,14 +299,17 @@ export async function renderTestVideoHandler(opts: {
         setProgress(jobId, tenantId, Math.min(dbPct, 90)).catch(console.error)
       },
     )
+    logMem('after-ffmpeg')
 
     await setProgress(jobId, tenantId, 90)
 
-    // ── Step 8: Upload MP4 to R2 ───────────────────────────────────────────────
+    // ── Step 7: Stream MP4 from disk to R2 (no fs.readFile into heap) ─────────
 
-    const videoBuffer = await fs.readFile(tmpOutput)
+    const { size: videoSizeBytes } = await fs.stat(tmpOutput)
     const videoKey = buildKey(tenantSlug, 'video', `job-${jobId}-render.mp4`)
-    await step('r2-put-video', () => putObject(videoKey, videoBuffer, 'video/mp4'))
+    logMem('before-r2-put-video')
+    await step('r2-put-video', () => putObjectFromFile(videoKey, tmpOutput, 'video/mp4'))
+    logMem('after-r2-put-video')
 
     const videoAsset = await createAssetRecord({
       tenantId,
@@ -297,10 +317,10 @@ export async function renderTestVideoHandler(opts: {
       r2Key: videoKey,
       originalFilename: `job-${jobId}-render.mp4`,
       mimeType: 'video/mp4',
-      sizeBytes: videoBuffer.byteLength,
+      sizeBytes: videoSizeBytes,
       durationSeconds,
-      width: 1920,
-      height: 1080,
+      width: 1280,
+      height: 720,
     })
 
     console.log(

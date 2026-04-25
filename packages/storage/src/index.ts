@@ -5,6 +5,8 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import type { Readable } from 'node:stream'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { randomUUID } from 'node:crypto'
@@ -119,6 +121,38 @@ export async function putObject(
       ContentType: contentType,
     }),
   )
+}
+
+// Stream a local file directly to R2 — no Buffer in Node heap.
+// ContentLength is required by S3-style APIs when body is a stream.
+export async function putObjectFromFile(
+  key: string,
+  filePath: string,
+  contentType: string,
+): Promise<void> {
+  const { size } = await stat(filePath)
+  await r2.send(
+    new PutObjectCommand({
+      Bucket: bucketName(),
+      Key: key,
+      Body: createReadStream(filePath),
+      ContentLength: size,
+      ContentType: contentType,
+    }),
+  )
+}
+
+// Stream an R2 object directly to a local file — no Buffer in Node heap.
+export async function getObjectToFile(r2Key: string, filePath: string): Promise<void> {
+  const res = await r2.send(new GetObjectCommand({ Bucket: bucketName(), Key: r2Key }))
+  const src = res.Body as Readable
+  const dst = createWriteStream(filePath)
+  await new Promise<void>((resolve, reject) => {
+    src.on('error', reject)
+    dst.on('error', reject)
+    dst.on('finish', resolve)
+    src.pipe(dst)
+  })
 }
 
 export async function getObjectBuffer(r2Key: string): Promise<Buffer> {
