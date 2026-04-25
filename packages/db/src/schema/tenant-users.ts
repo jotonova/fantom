@@ -2,7 +2,7 @@ import { pgEnum, pgTable, primaryKey, timestamp, uuid } from 'drizzle-orm/pg-cor
 import { tenants } from './tenants.js'
 import { users } from './users.js'
 
-export const tenantUserRoleEnum = pgEnum('tenant_user_role', ['owner', 'editor', 'viewer'])
+export const tenantUserRoleEnum = pgEnum('tenant_user_role', ['owner', 'editor', 'viewer', 'platform_admin'])
 
 export const tenantUsers = pgTable(
   'tenant_users',

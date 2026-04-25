@@ -5,6 +5,7 @@ import { db, assets, tenants } from '@fantom/db'
 import type { Asset } from '@fantom/db'
 import { generateUploadUrl, getPublicUrl, deleteObject, getObjectMetadata } from '@fantom/storage'
 import { requireAuth } from '../plugins/auth.js'
+import { logEvent } from '@fantom/observability'
 
 // ── MIME validation ────────────────────────────────────────────────────────────
 
@@ -164,6 +165,15 @@ const assetRoutes: FastifyPluginAsync = async (fastify) => {
     })
 
     if (!asset) return reply.code(500).send({ error: 'Failed to create asset' })
+    logEvent({
+      tenantId,
+      kind: 'asset.uploaded',
+      severity: 'info',
+      actorUserId: userId,
+      subjectType: 'asset',
+      subjectId: asset.id,
+      metadata: { kind, mimeType, sizeBytes },
+    })
     return reply.code(201).send(withPublicUrl(asset))
   })
 
@@ -260,6 +270,15 @@ const assetRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(err, `R2 delete failed for key ${asset.r2Key} (orphaned)`)
       }
 
+      logEvent({
+        tenantId,
+        kind: 'asset.deleted',
+        severity: 'info',
+        actorUserId: request.user!.id,
+        subjectType: 'asset',
+        subjectId: id,
+        metadata: { assetKind: asset.kind, originalFilename: asset.originalFilename },
+      })
       return reply.code(204).send()
     },
   )

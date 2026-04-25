@@ -16,10 +16,12 @@
   "dependencies": {
     "@fantom/db": "workspace:*",
     "@fantom/distribution-bus": "workspace:*",
+    "@fantom/observability": "workspace:*",
     "@fantom/jobs": "workspace:*",
     "@fantom/shared": "workspace:*",
     "@fantom/storage": "workspace:*",
     "@fantom/voice": "workspace:*",
+    "ioredis": "^5.0.0",
     "@fastify/cors": "^9.0.0",
     "@fastify/jwt": "^8.0.0",
     "@fastify/rate-limit": "^9.0.0",

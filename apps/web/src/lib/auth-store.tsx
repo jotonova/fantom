@@ -13,6 +13,7 @@ interface Tenant {
   id: string
   slug: string
   name: string
+  role: string
 }
 
 interface AuthState {
@@ -38,7 +39,7 @@ interface LoginResponse {
 
 interface MeResponse {
   user: User
-  tenant: Tenant
+  tenant: Tenant & { role: string }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

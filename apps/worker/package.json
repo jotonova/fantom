@@ -16,11 +16,13 @@
     "@fantom/db": "workspace:*",
     "@fantom/jobs": "workspace:*",
     "@fantom/distribution-bus": "workspace:*",
+    "@fantom/observability": "workspace:*",
     "@fantom/render-bus": "workspace:*",
     "@fantom/storage": "workspace:*",
     "@fantom/voice": "workspace:*",
     "bullmq": "^5.0.0",
     "dotenv": "^16.4.0",
+    "ioredis": "^5.0.0",
     "drizzle-orm": "^0.38.0",
     "ffmpeg-static": "^5.2.0",
     "fluent-ffmpeg": "^2.1.3"

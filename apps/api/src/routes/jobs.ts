@@ -6,6 +6,7 @@ import type { Job, JobKind, JobStatus } from '@fantom/db'
 import { getPublicUrl } from '@fantom/storage'
 import { enqueueJob, getQueue } from '@fantom/jobs'
 import { requireAuth } from '../plugins/auth.js'
+import { logEvent } from '@fantom/observability'
 
 // ── Type guards ───────────────────────────────────────────────────────────────
 
@@ -155,9 +156,27 @@ const jobRoutes: FastifyPluginAsync = async (fastify) => {
         await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
         await tx.update(jobs).set({ status: 'queued', updatedAt: new Date() }).where(eq(jobs.id, job.id))
       })
+      logEvent({
+        tenantId,
+        kind: 'job.created',
+        severity: 'info',
+        actorUserId: userId,
+        subjectType: 'job',
+        subjectId: job.id,
+        metadata: { jobKind: kind },
+      })
       return reply.code(201).send({ ...job, status: 'queued', outputAsset: null })
     } catch (err) {
       fastify.log.error(err, 'Failed to enqueue job')
+      logEvent({
+        tenantId,
+        kind: 'job.created',
+        severity: 'info',
+        actorUserId: userId,
+        subjectType: 'job',
+        subjectId: job.id,
+        metadata: { jobKind: kind, queued: false },
+      })
       return reply.code(201).send({ ...job, outputAsset: null })
     }
   })
@@ -256,6 +275,14 @@ const jobRoutes: FastifyPluginAsync = async (fastify) => {
         return row
       })
 
+      logEvent({
+        tenantId,
+        kind: 'job.cancelled',
+        severity: 'info',
+        actorUserId: request.user!.id,
+        subjectType: 'job',
+        subjectId: id,
+      })
       return reply.send({ ...updated, outputAsset: null })
     },
   )
@@ -344,6 +371,15 @@ const jobRoutes: FastifyPluginAsync = async (fastify) => {
         await tx.delete(jobs).where(eq(jobs.id, id))
       })
 
+      logEvent({
+        tenantId,
+        kind: 'job.deleted',
+        severity: 'info',
+        actorUserId: request.user!.id,
+        subjectType: 'job',
+        subjectId: id,
+        metadata: { previousStatus: job.status },
+      })
       return reply.code(204).send()
     },
   )

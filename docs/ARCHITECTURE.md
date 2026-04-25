@@ -17,6 +17,7 @@ fantom/
     ├── jobs/     # @fantom/jobs — BullMQ queues: fantom-render + fantom-distribute
     ├── render-bus/ # @fantom/render-bus — strategy pattern for render providers
     ├── shared/   # Shared TypeScript types (HealthResponse, etc.)
+    ├── observability/ # @fantom/observability — logEvent(), maybeAlert(), getMetricsSnapshot()
     ├── storage/  # @fantom/storage — Cloudflare R2 client (S3-compatible)
     ├── ui/       # @fantom/ui — React component library (Radix UI + Tailwind)
     └── voice/    # @fantom/voice — ElevenLabs client (synthesis + cloning)
@@ -29,6 +30,10 @@ apps/web/
 ├── app/
 │   ├── (authenticated)/      # Route group — all pages require auth
 │   │   ├── layout.tsx        # Sidebar + topbar shell; redirects to /login if unauth
+│   │   ├── admin/
+│   │   │   └── page.tsx      # Platform admin dashboard (platform_admin role only)
+│   │   ├── events/
+│   │   │   └── page.tsx      # Tenant event log (severity ≤ warn)
 │   │   └── dashboard/
 │   │       └── page.tsx
 │   ├── login/
@@ -173,6 +178,8 @@ Fantom uses a **shared database, schema-per-tenant-via-RLS** architecture:
 | `assets`          | ✅  | File library — images, audio, video (R2-backed) (F5) |
 | `voice_clones`    | ✅  | ElevenLabs voice library (F5)                        |
 | `jobs`            | ✅  | Render pipeline job queue — status, progress, I/O (F6)|
+| `events`          | ✅  | Structured event log — tenant + admin SELECT, open INSERT (F9) |
+| `alert_throttle`  | ❌  | Per-tenant-per-kind alert cooldown state (F9) |
 
 `users` and `sessions` are intentionally NOT RLS-restricted. Users are cross-tenant identities; sessions are auth tokens that establish the context RLS depends on (chicken-and-egg).
 
@@ -299,6 +306,63 @@ pending → queued → processing → completed
 - **Worker process**: Long-running — reads from Redis, runs ffmpeg, writes assets. No HTTP.
 - **Redis**: Queue transport only. Not the source of truth — all durable state is in Postgres.
 - **DB (Postgres)**: Single source of truth for job state, progress, inputs, outputs.
+
+## Observability (F9)
+
+```
+logEvent({ tenantId, kind, severity, ... })
+  │
+  ├── void _insert()          ← fire-and-forget; never throws to caller
+  │     │
+  │     ├── tenantId set?
+  │     │     ├── YES → db.transaction → set_config('app.current_tenant_id') → INSERT events
+  │     │     └── NO  → db.insert(events) directly (system events, e.g. auth.login.failed)
+  │     │
+  │     └── severity error|critical?
+  │           └── maybeAlert()
+  │                 ├── Global daily cap check (SUM alerts_sent_today from alert_throttle)
+  │                 ├── Per-tenant 5-min cooldown (skipped for critical)
+  │                 └── Resend.emails.send() → upsert alert_throttle
+  │
+  └── on any error → console.error (silent degradation)
+
+GET /events (tenant)
+  │
+  └── db.transaction → set_config('app.current_tenant_id') → SELECT events
+        WHERE tenant_id = current_tenant AND severity IN ('debug','info','warn')
+
+GET /admin/events (platform admin)
+  │
+  └── db.transaction → set_config('app.is_platform_admin', 'true') → SELECT events
+        (all tenants, all severities, minus error_stack in list view)
+
+getMetricsSnapshot({ tenantId })
+  └── set_config('app.is_platform_admin', 'true') → aggregation across jobs, distributions, events
+```
+
+### Event kinds
+
+| Prefix          | Emitted by          | Examples                                           |
+|-----------------|---------------------|----------------------------------------------------|
+| `auth.*`        | API auth routes     | `auth.login.success`, `auth.login.failed`          |
+| `job.*`         | Worker dispatcher   | `job.started`, `job.completed`, `job.failed`       |
+| `distribution.*`| Worker dispatcher   | `distribution.attempted`, `distribution.completed` |
+| `asset.*`       | API asset routes    | `asset.uploaded`                                   |
+| `voice.*`       | API voice routes    | `voice.clone_created`, `voice.clone_deleted`       |
+
+### RLS design for events
+
+The `events` table has three policies (all PERMISSIVE):
+
+| Policy                 | Operation | Condition                                                        |
+|------------------------|-----------|------------------------------------------------------------------|
+| `events_tenant_select` | SELECT    | `tenant_id = current_tenant_id GUC AND severity ≤ warn`          |
+| `events_admin_select`  | SELECT    | `is_platform_admin GUC = 'true'`                                 |
+| `events_insert`        | INSERT    | `WITH CHECK (true)` — open; allows null tenant_id system events  |
+
+Multiple PERMISSIVE policies OR together — a row is visible if any policy matches.
+
+---
 
 ## Key Design Decisions
 

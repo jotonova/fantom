@@ -21,6 +21,11 @@ const NAV_ITEMS = [
   { label: 'Voices', href: '/voices' },
   { label: 'Jobs', href: '/jobs' },
   { label: 'Distributions', href: '/distributions' },
+  { label: 'Events', href: '/events' },
+]
+
+const ADMIN_NAV_ITEMS = [
+  { label: 'Admin', href: '/admin' },
 ]
 
 export default function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
@@ -87,6 +92,28 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
               </a>
             )
           })}
+          {tenant?.role === 'platform_admin' && (
+            <>
+              <div className="my-2 border-t border-fantom-steel-border" />
+              {ADMIN_NAV_ITEMS.map((item) => {
+                const active = pathname === item.href || pathname.startsWith(item.href + '/')
+                return (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? 'page' : undefined}
+                    className={`flex items-center rounded-[6px] px-3 py-2 text-sm transition-colors ${
+                      active
+                        ? 'bg-fantom-steel text-fantom-text'
+                        : 'text-fantom-text-muted hover:bg-fantom-steel hover:text-fantom-text'
+                    }`}
+                  >
+                    {item.label}
+                  </a>
+                )
+              })}
+            </>
+          )}
         </nav>
       </aside>
 

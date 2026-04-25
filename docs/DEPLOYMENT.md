@@ -29,7 +29,7 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
    | Field            | Value                        |
    |------------------|------------------------------|
    | Root Directory   | *(blank — repo root)*        |
-   | Build Command    | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build && pnpm --filter @fantom/api build` |
+   | Build Command    | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/observability build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build && pnpm --filter @fantom/api build` |
    | Start Command    | `node apps/api/dist/index.js` |
    | Runtime          | Node 20                      |
 
@@ -106,6 +106,11 @@ The seed is idempotent — running it multiple times is safe.
 | API     | `R2_BUCKET_NAME`         | `fantom-assets`                                                 |
 | API     | `R2_PUBLIC_URL`          | `https://pub-xxxxx.r2.dev` (from bucket Public Access tab)     |
 | API     | `ELEVENLABS_API_KEY`     | ElevenLabs → Profile → API Keys                                 |
+| API     | `RESEND_API_KEY`         | Resend dashboard → API Keys (optional — alerts disabled if absent) |
+| API     | `ALERT_FROM_EMAIL`       | Verified sender in Resend (e.g. `alerts@fantomvid.com`)          |
+| API     | `ALERT_TO_EMAIL`         | Alert recipient (e.g. `novacor.icaz@gmail.com`)                  |
+| API     | `FANTOM_DAILY_ALERT_LIMIT` | Max alert emails/day (default: `50`)                           |
+| Worker  | `PORT_HEALTH`            | Health server port (default: `9999`)                             |
 | Web     | `NEXT_PUBLIC_API_URL`    | Render API service URL                                          |
 
 ---
@@ -236,7 +241,7 @@ The render worker is a Render **Background Worker** (not a Web Service — it ha
    | Region             | **Oregon (US West)** — must match other services        |
    | Root Directory     | *(blank — monorepo root)*                               |
    | Runtime            | Node 20                                                 |
-   | Build Command      | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build && pnpm --filter @fantom/worker build` |
+   | Build Command      | `pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/observability build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build && pnpm --filter @fantom/worker build` |
    | Start Command      | `node apps/worker/dist/index.js`                        |
    | Pre-Deploy Command | *(leave empty — worker does not run migrations)*        |
    | Instance Type      | **Standard** ($25/mo) — 2 GB RAM, 1 CPU; required for 1080p ffmpeg |
@@ -256,6 +261,10 @@ Copy all environment variables from `fantom-api`. The worker needs the same set:
 | `R2_BUCKET_NAME`       | Same as fantom-api (`fantom-assets`)            |
 | `R2_PUBLIC_URL`        | Same as fantom-api                              |
 | `ELEVENLABS_API_KEY`   | Same as fantom-api                              |
+| `RESEND_API_KEY`       | Same as fantom-api (or omit — alerts optional)  |
+| `ALERT_FROM_EMAIL`     | Same as fantom-api                              |
+| `ALERT_TO_EMAIL`       | Same as fantom-api                              |
+| `PORT_HEALTH`          | `9999` (worker health server — F9)              |
 
 > **Tip:** In Render's UI you can use **"Copy from another service"** (Settings → Environment → Sync environment variables from...) to copy all vars from `fantom-api` in one step.
 
@@ -264,18 +273,32 @@ Copy all environment variables from `fantom-api`. The worker needs the same set:
 The `fantom-api` build command must also compile `@fantom/jobs`, `@fantom/render-bus`, and `@fantom/distribution-bus`:
 
 ```
-pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build && pnpm --filter @fantom/api build
+pnpm install && pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/observability build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build && pnpm --filter @fantom/api build
 ```
 
 Update this in **Render → fantom-api → Settings → Build & Deploy → Build Command**.
 
-### Step 4 — Deploy and verify
+### Step 4 — Configure worker health check (F9)
+
+The worker now runs a minimal HTTP health server on `PORT_HEALTH` (default `9999`). Configure it in Render so the platform can detect a stuck worker:
+
+1. In **Render → fantom-worker → Settings → Health Check**:
+   - **Health Check Path:** `/health/ready`
+   - **Port:** `9999`
+2. Add `PORT_HEALTH=9999` to the worker's environment variables (or accept the default).
+
+The health server provides:
+- `GET /health/live` — always `200 OK` if the process is running
+- `GET /health/ready` — `200 OK` if DB and Redis are reachable; `503` otherwise
+
+### Step 5 — Deploy and verify
 
 1. Save and deploy the worker service.
 2. Check the worker logs — you should see:
    ```
    fantom-worker: database connected
    fantom-worker listening on queue fantom-render, ready
+   fantom-worker health server on port 9999
    ```
 3. From the Fantom web app, go to `/jobs`, create a test video job, and watch it progress.
 

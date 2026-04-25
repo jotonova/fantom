@@ -657,3 +657,50 @@ still in its final processing step.
 > 3. Rate limiting on `/auth/login` must be verified active (currently: 5 req/min/IP).
 >
 > **This is a hard gate, not a suggestion.** Shipping external users with `061284` as a seeded password would be a critical security vulnerability. The password is in the git history — it is considered public knowledge and must not be used in any production-facing context beyond Justin and Amy's internal sessions.
+
+---
+
+## ADR-011: Operator-Focused Observability (F9)
+
+**Status:** Accepted
+**Date:** 2026-04-25
+
+### Context
+
+After F1–F8, Fantom has a fully functional render-and-distribute pipeline but zero visibility into what it's doing. Job failures surface only in Render logs; no tenant can see their own activity; no platform admin can survey cross-tenant health without running raw SQL. F9 fills this gap by adding a structured event log, tenant-facing event stream, platform admin dashboard, and health endpoints.
+
+### Decision
+
+Build first-party observability into `@fantom/observability` — a new workspace package — instead of integrating an external service (Datadog, Axiom, OpenTelemetry, etc.).
+
+### Reasoning
+
+- **No egress cost.** Every log line through an external service has per-event pricing or volume tiers. At current scale, first-party Postgres storage is essentially free.
+- **Tenant-scoped access is trivial.** RLS already enforces tenant isolation; the `events` table inherits it automatically. No per-tenant filtering at the SDK layer needed.
+- **Platform admin is additive.** A single `app.is_platform_admin` GUC on top of the existing RLS pattern gives cross-tenant read access without a separate DB connection or owner role.
+- **No new infrastructure.** Postgres + Resend covers structured logs + alerts. Adding an APM vendor would require a new outbound connection from every environment.
+
+### Consequences
+
+- `events` table rows accumulate indefinitely. A retention/TTL job will be needed before the table reaches significant size (~90 days is a reasonable first sweep).
+- Alert throttling is per-tenant-per-kind with a 5-minute cooldown and a global daily cap (`FANTOM_DAILY_ALERT_LIMIT`, default 50). This is deliberately simple — not a paging-grade system.
+- `@fantom/observability` depends on `@fantom/db`, which means the observability package must be built before any app that imports it. Build commands updated accordingly (see DEPLOYMENT.md).
+
+### Sub-decisions
+
+**A: Fire-and-forget logging**
+`logEvent()` is synchronous from the caller's perspective — it calls `void _insert()` and returns immediately. A DB error in `_insert` degrades to stderr only; it never propagates to the caller. This is the correct trade-off for a logging path: a bug in the logger must not break the feature it's logging.
+
+**B: platform_admin stored in tenant_users.role**
+The platform admin role reuses the existing `tenant_user_role` enum rather than a separate `platform_admins` table. This keeps the JWT payload structure identical (`{ sub, tenantId, role }`) and avoids a second table. The trade-off is that `platform_admin` is semantically an app-level role, not a per-tenant role — but the implementation cost of a separate table is not justified at this scale.
+
+**C: Admin RLS via GUC, not a separate DB role**
+Cross-tenant admin queries set `app.is_platform_admin = 'true'` in a LOCAL transaction scope rather than connecting as the Postgres owner role. This keeps `DATABASE_URL` unchanged and avoids maintaining two connection pools.
+
+**D: Minimal worker health server**
+Render Background Workers have no HTTP listener. A minimal `node:http` server on `PORT_HEALTH` (default 9999) provides `/health/live` and `/health/ready` for Render health checks without adding Express or Fastify to the worker.
+
+**E: Events table severity cap for tenant view**
+The tenant-facing `/events` endpoint and its RLS policy filter to `severity IN ('debug', 'info', 'warn')`. Error and critical events are visible to platform admins only. This prevents leaking potentially sensitive error details (stack traces, internal IDs) through the tenant API.
+
+---

@@ -14,6 +14,9 @@ import assetRoutes from './routes/assets.js'
 import voiceRoutes from './routes/voices.js'
 import jobRoutes from './routes/jobs.js'
 import distributionRoutes from './routes/distributions.js'
+import adminRoutes from './routes/admin.js'
+import healthRoutes from './routes/health.js'
+import eventsRoutes from './routes/events.js'
 
 // Fail fast in production if JWT_SECRET is not set.
 if (process.env['NODE_ENV'] === 'production' && !process.env['JWT_SECRET']) {
@@ -84,6 +87,9 @@ await server.register(assetRoutes)
 await server.register(voiceRoutes)
 await server.register(jobRoutes)
 await server.register(distributionRoutes)
+await server.register(adminRoutes)
+await server.register(healthRoutes)
+await server.register(eventsRoutes)
 
 // ── Health endpoints ──────────────────────────────────────────────────────────
 

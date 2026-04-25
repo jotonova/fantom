@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
@@ -164,4 +165,19 @@ export async function getObjectBuffer(r2Key: string): Promise<Buffer> {
     stream.on('end', () => resolve(Buffer.concat(chunks)))
     stream.on('error', reject)
   })
+}
+
+/**
+ * Minimal health check: lists up to 1 object to confirm R2 credentials + connectivity.
+ * Returns { healthy: true } on success, { healthy: false, error: string } on failure.
+ */
+export async function checkStorageHealth(): Promise<{ healthy: boolean; error?: string }> {
+  try {
+    const bucket = bucketName()
+    if (!bucket) throw new Error('R2_BUCKET_NAME not configured')
+    await r2.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 }))
+    return { healthy: true }
+  } catch (err) {
+    return { healthy: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }

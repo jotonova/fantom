@@ -52,7 +52,7 @@ pnpm --filter @fantom/db db:seed
 
 ```bash
 # Build shared packages first, then start apps
-pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build
+pnpm --filter @fantom/shared build && pnpm --filter @fantom/db build && pnpm --filter @fantom/observability build && pnpm --filter @fantom/ui build && pnpm --filter @fantom/storage build && pnpm --filter @fantom/voice build && pnpm --filter @fantom/jobs build && pnpm --filter @fantom/render-bus build && pnpm --filter @fantom/distribution-bus build
 pnpm dev
 # Worker dev (in a separate terminal, requires local Redis)
 pnpm --filter @fantom/worker dev
@@ -85,6 +85,7 @@ fantom/
     ├── jobs/     # @fantom/jobs — BullMQ queue + worker factory
     ├── distribution-bus/ # @fantom/distribution-bus — strategy pattern for destination providers
     ├── render-bus/ # @fantom/render-bus — strategy pattern for render providers
+    ├── observability/ # @fantom/observability — logEvent(), maybeAlert(), metrics
     ├── shared/   # Shared TypeScript types
     ├── storage/  # @fantom/storage — Cloudflare R2 client
     ├── ui/       # @fantom/ui — React component library
@@ -109,7 +110,8 @@ fantom/
 
 | Method | Path              | Auth     | Description                                  |
 |--------|-------------------|----------|----------------------------------------------|
-| GET    | `/health`         | None     | Liveness check                               |
+| GET    | `/health/live`    | None     | Liveness check (always 200)                  |
+| GET    | `/health/ready`   | None     | Readiness check — DB + Redis ping            |
 | GET    | `/db/health`      | None     | DB connectivity + latency + migration count  |
 | POST   | `/auth/login`     | None     | Exchange credentials for token pair          |
 | POST   | `/auth/refresh`   | None     | Rotate refresh token, get new access token   |
@@ -130,6 +132,12 @@ fantom/
 | DELETE | `/distributions/:id` | Bearer | Delete a terminal distribution record     |
 | GET    | `/tenant-settings/distribution` | Bearer | Get auto-publish config        |
 | PUT    | `/tenant-settings/distribution` | Bearer | Set auto-publish config        |
+| GET    | `/events`         | Bearer   | Tenant event log (severity ≤ warn, cursor paged) |
+| GET    | `/admin/metrics`  | platform_admin | Cross-tenant metrics snapshot          |
+| GET    | `/admin/events`   | platform_admin | All-tenant event log with filters      |
+| GET    | `/admin/events/:id` | platform_admin | Single event with full error stack   |
+| GET    | `/admin/tenants`  | platform_admin | Tenant roster with per-tenant summaries |
+| GET    | `/admin/health`   | platform_admin | DB, Redis, R2, Resend, ElevenLabs checks |
 
 ### Smoke test — login → verify → me
 

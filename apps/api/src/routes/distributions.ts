@@ -7,6 +7,7 @@ import type { DestinationKind } from '@fantom/distribution-bus'
 import { getPublicUrl } from '@fantom/storage'
 import { enqueueDistribution, getDistributeQueue } from '@fantom/jobs'
 import { requireAuth } from '../plugins/auth.js'
+import { logEvent } from '@fantom/observability'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -164,6 +165,15 @@ const distributionRoutes: FastifyPluginAsync = async (fastify) => {
         .where(eq(distributions.id, dist.id))
     })
 
+    logEvent({
+      tenantId,
+      kind: 'distribution.created',
+      severity: 'info',
+      actorUserId: userId,
+      subjectType: 'distribution',
+      subjectId: dist.id,
+      metadata: { destinationKind: kind, jobId },
+    })
     return reply.code(201).send({ ...dist, status: 'queued' })
   })
 

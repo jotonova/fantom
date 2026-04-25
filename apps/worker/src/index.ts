@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { startHealthServer } from './health.js'
 import { db, pool } from '@fantom/db'
 import { getWorker, getDistributeWorker, enqueueDistribution, JobKind } from '@fantom/jobs'
 import type { QueuePayload, DistributePayload } from '@fantom/jobs'
@@ -11,6 +12,7 @@ import {
   CancelledError as DistributionCancelledError,
 } from '@fantom/distribution-bus'
 import type { DistributionContext } from '@fantom/distribution-bus'
+import { logEvent } from '@fantom/observability'
 import { FfmpegProvider } from './providers/ffmpegProvider.js'
 import { RemotionProvider } from './providers/remotionProvider.js'
 import { CapCutProvider } from './providers/capcutProvider.js'
@@ -146,6 +148,15 @@ async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
 
   await patchJob(jobId, tenantId, { status: 'processing', startedAt: new Date() })
 
+  logEvent({
+    tenantId,
+    kind: 'job.started',
+    severity: 'info',
+    subjectType: 'job',
+    subjectId: jobId,
+    metadata: { jobKind: kind },
+  })
+
   const preferred = await getPreferredProvider(tenantId).catch(() => undefined)
   const provider = renderBus.resolve(kind, preferred)
 
@@ -204,6 +215,19 @@ async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
       outputAssetId: videoAsset.id,
       completedAt: new Date(),
     })
+
+    logEvent({
+      tenantId,
+      kind: 'job.completed',
+      severity: 'info',
+      subjectType: 'job',
+      subjectId: jobId,
+      metadata: {
+        jobKind: kind,
+        provider: provider.name,
+        outputAssetId: videoAsset.id,
+      },
+    })
   } catch (err) {
     if (err instanceof RenderCancelledError) {
       console.log(`[job:cancelled] bull job ${bullJob.id} (${kind}) — not retrying`)
@@ -228,6 +252,16 @@ async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
         errorMessage: errMessage,
         errorStack: errStack,
       }).catch(console.error)
+      logEvent({
+        tenantId,
+        kind: 'job.failed',
+        severity: 'error',
+        subjectType: 'job',
+        subjectId: jobId,
+        metadata: { jobKind: kind, provider: provider.name, retries: newRetries },
+        errorMessage: errMessage,
+        errorStack: errStack,
+      })
     }
 
     throw err
@@ -247,6 +281,15 @@ async function dispatchDistribution(bullJob: BullJob<DistributePayload>): Promis
   await patchDistribution(distributionId, tenantId, {
     status: 'processing',
     startedAt: new Date(),
+  })
+
+  logEvent({
+    tenantId,
+    kind: 'distribution.attempted',
+    severity: 'info',
+    subjectType: 'distribution',
+    subjectId: distributionId,
+    metadata: { destinationKind: kind },
   })
 
   const provider = distributionBus.resolve(kind)
@@ -303,6 +346,18 @@ async function dispatchDistribution(bullJob: BullJob<DistributePayload>): Promis
       completedAt: new Date(),
     })
 
+    logEvent({
+      tenantId,
+      kind: 'distribution.completed',
+      severity: 'info',
+      subjectType: 'distribution',
+      subjectId: distributionId,
+      metadata: {
+        destinationKind: kind,
+        externalId: result.externalId ?? null,
+        externalUrl: result.externalUrl ?? null,
+      },
+    })
     console.log(`[dist:${distributionId}] completed → ${kind}`)
   } catch (err) {
     await provider.onError?.(context, err instanceof Error ? err : new Error(String(err)))
@@ -338,6 +393,16 @@ async function dispatchDistribution(bullJob: BullJob<DistributePayload>): Promis
         errorMessage: errMessage,
         errorStack: errStack,
       }).catch(console.error)
+      logEvent({
+        tenantId,
+        kind: 'distribution.failed',
+        severity: 'error',
+        subjectType: 'distribution',
+        subjectId: distributionId,
+        metadata: { destinationKind: kind, retries: newRetries },
+        errorMessage: errMessage,
+        errorStack: errStack,
+      })
       throw err
     }
   }
@@ -368,6 +433,11 @@ for (const [label, w] of [
   })
 }
 
+// ── Health server ─────────────────────────────────────────────────────────────
+// Render Background Workers have no default HTTP listener; this minimal server
+// provides /health/live and /health/ready for the Render health check system.
+const healthServer = startHealthServer()
+
 console.log('fantom-worker listening on queues fantom-render + fantom-distribute, ready')
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
@@ -377,6 +447,7 @@ async function shutdown(signal: string): Promise<void> {
   await renderWorker.close()
   await distributeWorker.close()
   await pool.end()
+  healthServer.close()
   console.log('fantom-worker: shutdown complete')
   process.exit(0)
 }

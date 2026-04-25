@@ -12,6 +12,7 @@ import {
   verifyPassword,
 } from '../lib/auth.js'
 import { requireAuth } from '../plugins/auth.js'
+import { logEvent } from '@fantom/observability'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,11 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
       const passwordOk = await verifyPassword(password, hashToCheck)
 
       if (!userRow || !userRow.passwordHash || !passwordOk) {
+        logEvent({
+          kind: 'auth.login.failed',
+          severity: 'warn',
+          metadata: { email },
+        })
         return reply.code(401).send({ error: 'Invalid credentials' })
       }
 
@@ -136,6 +142,14 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
         expiresAt,
         userAgent: request.headers['user-agent'] ?? null,
         ipAddress: request.ip,
+      })
+
+      logEvent({
+        tenantId: membership.tenantId,
+        kind: 'auth.login.success',
+        severity: 'info',
+        actorUserId: userRow.id,
+        metadata: { email: userRow.email },
       })
 
       return reply.send({

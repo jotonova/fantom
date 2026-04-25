@@ -7,6 +7,7 @@ import { getPublicUrl, putObject, buildKey } from '@fantom/storage'
 import { listVoices, cloneVoice, synthesize, deleteVoice, getVoice } from '@fantom/voice'
 import type { VoiceListItem } from '@fantom/voice'
 import { requireAuth } from '../plugins/auth.js'
+import { logEvent } from '@fantom/observability'
 
 // ── Simple in-memory cache for ElevenLabs defaults ────────────────────────────
 
@@ -215,6 +216,15 @@ const voiceRoutes: FastifyPluginAsync = async (fastify) => {
       })
 
       if (!voice) return reply.code(500).send({ error: 'Failed to adopt voice' })
+      logEvent({
+        tenantId,
+        kind: 'voice.adopted',
+        severity: 'info',
+        actorUserId: userId,
+        subjectType: 'voice_clone',
+        subjectId: voice.id,
+        metadata: { elevenlabsVoiceId: voiceId, name: voice.name },
+      })
       return reply.code(201).send(voice)
     },
   )
@@ -285,6 +295,19 @@ const voiceRoutes: FastifyPluginAsync = async (fastify) => {
     })
 
     if (!asset) return reply.code(500).send({ error: 'Failed to register synthesized asset' })
+    logEvent({
+      tenantId,
+      kind: 'voice.synthesized',
+      severity: 'info',
+      actorUserId: userId,
+      subjectType: 'voice_clone',
+      subjectId: id,
+      metadata: {
+        characters: text.trim().length,
+        elevenlabsVoiceId: voice.providerVoiceId ?? undefined,
+        assetId: asset.id,
+      },
+    })
     return reply.send({ ...asset, publicUrl: getPublicUrl(asset.r2Key) })
   })
 
