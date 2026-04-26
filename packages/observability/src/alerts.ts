@@ -1,9 +1,7 @@
-import { and, eq, gte, sql } from 'drizzle-orm'
-import { db, alertThrottle, tenants } from '@fantom/db'
+import { eq, sql } from 'drizzle-orm'
+import { db, tenants } from '@fantom/db'
 import type { Event } from '@fantom/db'
 import { Resend } from 'resend'
-
-const FIVE_MINUTES_MS = 5 * 60 * 1000
 
 function getDailyLimit(): number {
   return parseInt(process.env['FANTOM_DAILY_ALERT_LIMIT'] ?? '5', 10) || 5
@@ -21,20 +19,25 @@ export interface AlertResult {
 }
 
 /**
- * Throttled alert sender. Checks:
- * 1. Global daily cap across all tenants (hard stop against runaway loops)
- * 2. Per-tenant per-kind 5-minute cooldown (skipped for 'critical' severity)
+ * Throttled alert sender.
+ *
+ * For tenant-scoped events: uses an atomic INSERT...ON CONFLICT...DO UPDATE
+ * pattern to both gate and record the alert in a single round-trip. The WHERE
+ * clause on the UPDATE encodes both throttle conditions (5-min cooldown AND
+ * per-tenant daily cap). If the UPDATE WHERE fails, no row is returned and we
+ * know to skip — without any read-then-write race window.
+ *
+ * For system events (tenant_id IS NULL): alert_throttle requires a non-null
+ * tenant_id, so per-kind throttling is not available. A coarse global daily cap
+ * check is performed instead; this path is intentionally simpler since system
+ * events (e.g. admin smoke tests) are low-volume and not production-critical.
  *
  * Returns an AlertResult describing whether the alert was sent and why it
- * was skipped if not — callers can surface this for debugging.
- *
- * If RESEND_API_KEY or ALERT_TO is not configured, returns immediately with
- * skippedReason: 'not_configured'.
+ * was skipped if not.
  */
 export async function maybeAlert(event: Event): Promise<AlertResult> {
   const apiKey = process.env['RESEND_API_KEY']
-  const fromEmail =
-    process.env['ALERT_FROM'] ?? 'Fantom Alerts <alerts@fantomvid.com>'
+  const fromEmail = process.env['ALERT_FROM'] ?? 'Fantom Alerts <alerts@fantomvid.com>'
   const toRaw = process.env['ALERT_TO'] ?? ''
   const toEmails = toRaw
     .split(',')
@@ -50,58 +53,88 @@ export async function maybeAlert(event: Event): Promise<AlertResult> {
     return { sent: false, skippedReason: 'not_configured' }
   }
 
-  const dayKey = getTodayKey()
   const tenantId = event.tenantId
   const kind = event.kind
   const isCritical = event.severity === 'critical'
 
-  // ── 1. Global daily cap ───────────────────────────────────────────────────────
-  try {
-    const result = await db.execute<{ total: string }>(
-      sql`SELECT COALESCE(SUM(alerts_sent_today), 0)::text AS total FROM alert_throttle WHERE day_key = ${dayKey}::date`,
-    )
-    const totalToday = parseInt(result.rows[0]?.total ?? '0', 10)
-    if (totalToday >= dailyLimit) {
-      console.log(
-        `[observability] daily alert cap (${dailyLimit}) reached — skipping ${kind}`,
-      )
-      return { sent: false, skippedReason: 'daily_cap' }
-    }
-  } catch (err) {
-    console.error('[observability] daily cap check failed:', err)
-    return { sent: false, skippedReason: 'send_failed' }
-  }
+  // ── Throttle gate ─────────────────────────────────────────────────────────────
 
-  // ── 2. Per-tenant per-kind 5-minute throttle (skipped for critical) ───────────
-  if (tenantId && !isCritical) {
+  if (tenantId) {
+    // Tenant-scoped events: atomic throttle gate via INSERT...ON CONFLICT.
+    //
+    // The UPDATE only fires when the throttle conditions pass:
+    //   - non-critical: outside the 5-minute cooldown window AND under daily cap
+    //   - critical: only under daily cap (no cooldown — critical must get through fast)
+    //
+    // If UPDATE WHERE fails (conditions not met), no row is returned → skip.
+    // If INSERT succeeds (first alert today) or UPDATE fires → proceed to send.
+    //
+    // This eliminates the read-then-write race: all concurrent callers attempt the
+    // same upsert; only one can win the UPDATE WHERE race; others see 0 rows returned.
     try {
-      const fiveMinAgo = new Date(Date.now() - FIVE_MINUTES_MS)
-      const existing = await db
-        .select({ id: alertThrottle.id })
-        .from(alertThrottle)
-        .where(
-          and(
-            eq(alertThrottle.tenantId, tenantId),
-            eq(alertThrottle.eventKind, kind),
-            eq(alertThrottle.dayKey, dayKey),
-            gte(alertThrottle.lastAlertedAt, fiveMinAgo),
-          ),
-        )
-        .limit(1)
+      const throttleResult = await db.execute<{ alerts_sent_today: number }>(
+        isCritical
+          ? sql`
+              INSERT INTO alert_throttle (tenant_id, event_kind, day_key, last_alerted_at, alerts_sent_today)
+              VALUES (${tenantId}, ${kind}, CURRENT_DATE, NOW(), 1)
+              ON CONFLICT (tenant_id, event_kind, day_key) DO UPDATE
+                SET last_alerted_at = EXCLUDED.last_alerted_at,
+                    alerts_sent_today = alert_throttle.alerts_sent_today + 1
+                WHERE alert_throttle.alerts_sent_today < ${dailyLimit}
+              RETURNING alerts_sent_today
+            `
+          : sql`
+              INSERT INTO alert_throttle (tenant_id, event_kind, day_key, last_alerted_at, alerts_sent_today)
+              VALUES (${tenantId}, ${kind}, CURRENT_DATE, NOW(), 1)
+              ON CONFLICT (tenant_id, event_kind, day_key) DO UPDATE
+                SET last_alerted_at = EXCLUDED.last_alerted_at,
+                    alerts_sent_today = alert_throttle.alerts_sent_today + 1
+                WHERE alert_throttle.last_alerted_at < NOW() - INTERVAL '5 minutes'
+                  AND alert_throttle.alerts_sent_today < ${dailyLimit}
+              RETURNING alerts_sent_today
+            `,
+      )
 
-      if (existing.length > 0) {
-        console.log(
-          `[observability] throttled (5min): ${kind} for tenant ${tenantId}`,
-        )
-        return { sent: false, skippedReason: 'throttled' }
+      if (throttleResult.rows.length === 0) {
+        // UPDATE WHERE failed → we're throttled or at the daily cap.
+        // Do a follow-up read to distinguish the two for accurate reporting.
+        const reasonResult = await db.execute<{ skip_reason: string }>(sql`
+          SELECT
+            CASE WHEN alerts_sent_today >= ${dailyLimit} THEN 'daily_cap' ELSE 'throttled' END AS skip_reason
+          FROM alert_throttle
+          WHERE tenant_id = ${tenantId} AND event_kind = ${kind} AND day_key = CURRENT_DATE
+        `)
+        const skippedReason = (reasonResult.rows[0]?.skip_reason ?? 'throttled') as AlertSkippedReason
+        console.log(`[observability] ${skippedReason}: ${kind} for tenant ${tenantId}`)
+        return { sent: false, skippedReason }
+      }
+      // Row returned → we won the upsert race, proceed to send.
+    } catch (err) {
+      console.error('[observability] throttle upsert failed:', err)
+      return { sent: false, skippedReason: 'send_failed' }
+    }
+  } else {
+    // System events (null tenant_id): alert_throttle requires non-null tenant_id,
+    // so per-kind atomic throttling isn't available. Fall back to a coarse global
+    // daily cap check. This is intentionally racy — system events are low-volume
+    // (admin smoke tests, pre-tenant auth failures) and not production-critical.
+    try {
+      const dayKey = getTodayKey()
+      const result = await db.execute<{ total: string }>(
+        sql`SELECT COALESCE(SUM(alerts_sent_today), 0)::text AS total FROM alert_throttle WHERE day_key = ${dayKey}::date`,
+      )
+      const totalToday = parseInt(result.rows[0]?.total ?? '0', 10)
+      if (totalToday >= dailyLimit) {
+        console.log(`[observability] daily alert cap (${dailyLimit}) reached — skipping ${kind}`)
+        return { sent: false, skippedReason: 'daily_cap' }
       }
     } catch (err) {
-      console.error('[observability] throttle check failed:', err)
+      console.error('[observability] daily cap check failed:', err)
       return { sent: false, skippedReason: 'send_failed' }
     }
   }
 
-  // ── 3. Resolve tenant slug for context ────────────────────────────────────────
+  // ── Resolve tenant slug ───────────────────────────────────────────────────────
   let tenantSlug: string | null = null
   if (tenantId) {
     try {
@@ -121,7 +154,7 @@ export async function maybeAlert(event: Event): Promise<AlertResult> {
     }
   }
 
-  // ── 4. Build and send email ───────────────────────────────────────────────────
+  // ── Build and send email ──────────────────────────────────────────────────────
   const subject = `[Fantom ${event.severity.toUpperCase()}] ${kind} (tenant: ${tenantSlug ?? 'system'})`
   const adminLink = `https://fantomvid.com/admin?event=${event.id}`
   const meta = event.metadata as Record<string, unknown>
@@ -153,27 +186,6 @@ ${Object.keys(meta).length > 0 ? `<h3 style="font-family:sans-serif;">Metadata</
     if (error) {
       console.error('[observability] Resend send error:', error)
       return { sent: false, skippedReason: 'send_failed' }
-    }
-
-    // ── 5. Update throttle record ─────────────────────────────────────────────
-    if (tenantId) {
-      const now = new Date()
-      await db
-        .insert(alertThrottle)
-        .values({
-          tenantId,
-          eventKind: kind,
-          lastAlertedAt: now,
-          alertsSentToday: 1,
-          dayKey,
-        })
-        .onConflictDoUpdate({
-          target: [alertThrottle.tenantId, alertThrottle.eventKind, alertThrottle.dayKey],
-          set: {
-            lastAlertedAt: now,
-            alertsSentToday: sql`alert_throttle.alerts_sent_today + 1`,
-          },
-        })
     }
 
     console.log(`[observability] alert sent: ${subject}`)

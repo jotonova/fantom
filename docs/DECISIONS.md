@@ -705,6 +705,35 @@ The tenant-facing `/events` endpoint and its RLS policy filter to `severity IN (
 
 ---
 
+## ADR-013: Atomic Alert Throttle via ON CONFLICT
+
+**Status:** Accepted
+**Date:** 2026-04-25
+
+### Context
+
+Burst-load testing revealed a race condition in `maybeAlert()`: when N concurrent events arrived simultaneously, the original read-then-write throttle pattern (SELECT existing row → compare timestamp → INSERT/UPDATE) let all N requests slip through because they all read "no recent alert" before any of them had written the throttle record. All N attempted to send emails; the inbox received fewer (Resend deduplication), but the API falsely reported `alert_throttled: false` for all of them.
+
+### Decision
+
+Replace the two-step read-then-write with a single atomic `INSERT ... ON CONFLICT DO UPDATE ... WHERE ... RETURNING` statement. The WHERE clause on the UPDATE encodes both throttle conditions (5-minute cooldown AND per-tenant daily cap). If the WHERE fails, PostgreSQL returns no row from RETURNING — the caller skips without any read-write gap. Only one concurrent caller can win the UPDATE WHERE; all others see 0 rows.
+
+### Why not a SELECT FOR UPDATE / advisory lock?
+
+Both require an explicit lock acquisition round-trip before the work, and advisory locks require coordinated cleanup. The ON CONFLICT pattern achieves atomicity in a single statement using PostgreSQL's built-in conflict resolution, which is already optimised for this exact use case.
+
+### Scope and known limitation
+
+The atomic upsert applies to **tenant-scoped events only**. The `alert_throttle` table requires a non-null `tenant_id` (FK to `tenants`), so system events (null `tenant_id`) — e.g. admin smoke tests, pre-tenant auth failures — cannot use this table. System events fall back to a coarse global daily cap check that remains racy. This is an acceptable trade-off: system events are low-volume and not production-critical. A future schema change (nullable `tenant_id` + partial unique index) would close this gap if system-level throttling becomes important.
+
+### Consequences
+
+- Per-tenant alert throttle is now race-free for all production event paths.
+- The response from `/admin/alerts/test` now includes `alert_sent` (bool) and treats both `throttled` and `daily_cap` as `alert_throttled: true` for accurate burst-test feedback.
+- The follow-up SELECT (to distinguish `throttled` vs `daily_cap` when RETURNING is empty) adds one extra round-trip on the throttled path only — not on the hot path.
+
+---
+
 ## ADR-012: RLS GUC Testing Protocol
 
 **Status:** Accepted

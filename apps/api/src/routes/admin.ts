@@ -196,11 +196,13 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       },
     })
 
+    const ar = result.alertResult
     return reply.send({
       event_id: result.eventId,
       alert_attempted: result.alertAttempted,
-      alert_throttled: result.alertResult?.skippedReason === 'throttled',
-      alert_skipped_reason: result.alertResult?.skippedReason ?? null,
+      alert_sent: ar?.sent ?? false,
+      alert_throttled: ar?.skippedReason === 'throttled' || ar?.skippedReason === 'daily_cap',
+      alert_skipped_reason: ar?.skippedReason ?? null,
     })
   })
 }
