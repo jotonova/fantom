@@ -11,6 +11,9 @@ export const brandKits = pgTable(
       .notNull()
       .references(() => tenants.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    slug: text('slug'), // short machine identifier; unique per tenant (partial index, NULL excluded)
+    description: text('description'),
+    complianceNotes: text('compliance_notes'),
     isDefault: boolean('is_default').notNull().default(false),
     // Logo
     logoAssetId: uuid('logo_asset_id').references(() => assets.id, { onDelete: 'set null' }),
