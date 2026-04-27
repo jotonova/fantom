@@ -344,8 +344,15 @@ export class ShortVideoProvider implements RenderProvider {
         if (clone?.providerVoiceId) providerVoiceId = clone.providerVoiceId
       }
       if (!providerVoiceId) {
+        // API validates voiceCloneId is required, but guard here in case of
+        // direct DB manipulation or migration edge cases.
         providerVoiceId = process.env['ELEVENLABS_DEFAULT_VOICE_ID']
-        if (!providerVoiceId) throw new Error('No voice clone and ELEVENLABS_DEFAULT_VOICE_ID not set')
+        if (!providerVoiceId) {
+          throw new Error(
+            'No voice clone selected and ELEVENLABS_DEFAULT_VOICE_ID is not set. ' +
+            'Select a voice clone when creating the short.',
+          )
+        }
       }
 
       // ── 3. Synthesize TTS ─────────────────────────────────────────────────

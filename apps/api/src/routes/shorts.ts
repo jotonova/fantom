@@ -141,14 +141,17 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     if (!Array.isArray(photoAssetIds) || photoAssetIds.length === 0) {
       return reply.code(400).send({ error: 'photoAssetIds must be a non-empty array' })
     }
-    if (photoAssetIds.length > 20) {
-      return reply.code(400).send({ error: 'Maximum 20 photos per short' })
+    if (photoAssetIds.length > 30) {
+      return reply.code(400).send({ error: 'Maximum 30 photos per short' })
     }
     if (!VALID_VIBES.has(vibe)) {
       return reply.code(400).send({ error: 'Invalid vibe' })
     }
     if (musicVibe && !VALID_MUSIC_VIBES.has(musicVibe)) {
       return reply.code(400).send({ error: 'Invalid musicVibe' })
+    }
+    if (typeof voiceCloneId !== 'string' || !voiceCloneId.trim()) {
+      return reply.code(400).send({ error: 'voiceCloneId is required' })
     }
 
     const tenantId = request.tenantId!

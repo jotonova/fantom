@@ -306,6 +306,18 @@ async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
         errorMessage: errMessage,
         errorStack: errStack,
       }).catch(console.error)
+
+      // Mirror failure state to shorts_jobs so the preview page shows 'failed'
+      // instead of remaining stuck on 'rendering'.
+      if (kind === JobKind.RENDER_SHORT_VIDEO && typeof job.input['shortsJobId'] === 'string') {
+        await patchShortsJob(job.input['shortsJobId'], tenantId, {
+          status: 'failed',
+          errorMessage: errMessage,
+        }).catch((e) => {
+          console.error(`[job:${jobId}] failed to mirror failure to shorts_job:`, e)
+        })
+      }
+
       logEvent({
         tenantId,
         kind: 'job.failed',

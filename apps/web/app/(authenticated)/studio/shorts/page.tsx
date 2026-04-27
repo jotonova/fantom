@@ -31,6 +31,8 @@ interface VoiceClone {
   name: string
   status: string
   providerVoiceId: string | null
+  isPersonal: boolean
+  ownerUserId: string | null
 }
 
 interface Asset {
@@ -49,6 +51,8 @@ interface GenerateScriptResult {
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+const MAX_PHOTOS = 30
 
 const VIBE_OPTIONS: { value: ShortVibe; label: string; description: string }[] = [
   { value: 'excited_reveal', label: 'Excited Reveal', description: 'High-energy, punchy, hooks immediately' },
@@ -108,7 +112,9 @@ function PhotoDropZone({
         ) : (
           <>
             <p className="text-sm text-fantom-text-muted">Drop photos here or click to browse</p>
-            <p className="mt-1 text-xs text-fantom-text-muted/60">JPEG, PNG, WebP — max 100 MB each</p>
+            <p className="mt-1 text-xs text-fantom-text-muted/60">
+              JPEG, PNG, WebP — max 100 MB each · up to {MAX_PHOTOS} photos
+            </p>
           </>
         )}
         <input
@@ -227,6 +233,7 @@ export default function ShortsCreatePage() {
   const [generatingScript, setGeneratingScript] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [voiceError, setVoiceError] = useState(false)
 
   // Load brand kits + voices on mount
   useEffect(() => {
@@ -236,11 +243,16 @@ export default function ShortsCreatePage() {
       if (def) setBrandKitId(def.id)
     }).catch(() => {})
 
-    void apiFetch<{ voiceClones: VoiceClone[] }>('/voices').then((r) => {
-      const ready = (r.voiceClones ?? []).filter((v) => v.status === 'ready')
+    // API returns { voices: VoiceClone[] } — all tenant clones regardless of status
+    void apiFetch<{ voices: VoiceClone[] }>('/voices').then((r) => {
+      const ready = (r.voices ?? []).filter((v) => v.status === 'ready')
       setVoices(ready)
     }).catch(() => {})
   }, [])
+
+  // Grouped voices for dropdown rendering
+  const sharedVoices = voices.filter((v) => !v.isPersonal)
+  const personalVoices = voices.filter((v) => v.isPersonal)
 
   // ── Photo upload ────────────────────────────────────────────────────────────
 
@@ -251,8 +263,11 @@ export default function ShortsCreatePage() {
 
     for (const file of Array.from(files)) {
       if (!file.type.startsWith('image/')) continue
+      if (photos.length + added.length >= MAX_PHOTOS) {
+        setError(`Maximum ${MAX_PHOTOS} photos per short`)
+        break
+      }
       try {
-        // 1. Get presigned upload URL
         const { uploadUrl, key } = await apiFetch<{ uploadUrl: string; key: string }>(
           '/assets/upload-url',
           {
@@ -261,10 +276,8 @@ export default function ShortsCreatePage() {
           },
         )
 
-        // 2. PUT to R2
         await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
 
-        // 3. Register in DB
         const asset = await apiFetch<Asset>('/assets', {
           method: 'POST',
           body: JSON.stringify({
@@ -284,25 +297,22 @@ export default function ShortsCreatePage() {
 
     setPhotos((prev) => [...prev, ...added])
     setUploading(false)
-  }, [])
+  }, [photos.length])
 
   const handlePhotoRemove = useCallback((id: string) => {
     setPhotos((prev) => prev.filter((p) => p.id !== id))
   }, [])
 
-  // ── Script generation ───────────────────────────────────────────────────────
+  // ── Script + caption generation ─────────────────────────────────────────────
 
   async function handleGenerateScript() {
     if (photos.length === 0) {
       setError('Add at least one photo before generating a script')
       return
     }
-
-    const selectedKit = brandKits.find((k) => k.id === brandKitId)
-    if (!selectedKit) {
-      setError('Select a brand kit before generating a script')
-      return
-    }
+    // Use selected brand kit name, or the first available, or a generic fallback
+    const selectedKit = brandKits.find((k) => k.id === brandKitId) ?? brandKits[0]
+    const brandKitName = selectedKit?.name ?? 'Novacor'
 
     setGeneratingScript(true)
     setError(null)
@@ -311,10 +321,10 @@ export default function ShortsCreatePage() {
         method: 'POST',
         body: JSON.stringify({
           vibe,
-          brandKitName: selectedKit.name,
+          brandKitName,
           photoCount: photos.length,
           targetDurationSeconds: targetDuration,
-          hint: hint.trim() || undefined,
+          ...(hint.trim() ? { hint: hint.trim() } : {}),
         }),
       })
       setScript(result.script)
@@ -332,9 +342,15 @@ export default function ShortsCreatePage() {
   async function handleSubmit() {
     if (photos.length === 0) { setError('Add at least one photo'); return }
     if (!script.trim()) { setError('Generate or write a script first'); return }
+    if (!voiceCloneId) {
+      setVoiceError(true)
+      setError('Select a voice before rendering')
+      return
+    }
 
     setSubmitting(true)
     setError(null)
+    setVoiceError(false)
     try {
       const result = await apiFetch<{ id: string }>('/shorts', {
         method: 'POST',
@@ -346,7 +362,7 @@ export default function ShortsCreatePage() {
           captionText: captionText.trim() || undefined,
           captionSource: customCaption && captionText === customCaption ? 'custom' : 'ai_generated',
           brandKitId: brandKitId || undefined,
-          voiceCloneId: voiceCloneId || undefined,
+          voiceCloneId,
           musicVibe,
           targetDurationSeconds: targetDuration,
         }),
@@ -357,6 +373,8 @@ export default function ShortsCreatePage() {
       setSubmitting(false)
     }
   }
+
+  const canSubmit = photos.length > 0 && script.trim().length > 0 && voiceCloneId !== ''
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -381,7 +399,7 @@ export default function ShortsCreatePage() {
           <CardTitle className="text-base">
             Photos
             {photos.length > 0 && (
-              <Badge variant="neutral" className="ml-2">{photos.length}</Badge>
+              <Badge variant="neutral" className="ml-2">{photos.length} / {MAX_PHOTOS}</Badge>
             )}
           </CardTitle>
         </CardHeader>
@@ -420,18 +438,50 @@ export default function ShortsCreatePage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="voice">Voice</Label>
+              <Label htmlFor="voice">
+                Voice <span className="text-red-400">*</span>
+              </Label>
               <select
                 id="voice"
                 value={voiceCloneId}
-                onChange={(e) => setVoiceCloneId(e.target.value)}
-                className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text focus:outline-none focus:ring-2 focus:ring-fantom-blue"
+                onChange={(e) => {
+                  setVoiceCloneId(e.target.value)
+                  setVoiceError(false)
+                }}
+                className={`w-full rounded-fantom border px-3 py-2 text-sm text-fantom-text focus:outline-none focus:ring-2 focus:ring-fantom-blue bg-fantom-steel ${
+                  voiceError
+                    ? 'border-red-500 focus:ring-red-500'
+                    : 'border-fantom-steel-border'
+                }`}
               >
-                <option value="">Default voice</option>
-                {voices.map((v) => (
-                  <option key={v.id} value={v.id}>{v.name}</option>
-                ))}
+                <option value="">— Select a voice —</option>
+                {sharedVoices.length > 0 && (
+                  <optgroup label="Shared Voices">
+                    {sharedVoices.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {personalVoices.length > 0 && (
+                  <optgroup label="Personal Voices">
+                    {personalVoices.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
+              {voiceError && (
+                <p className="text-xs text-red-400">A voice is required to render</p>
+              )}
+              {voices.length === 0 && (
+                <p className="text-xs text-fantom-text-muted">
+                  No voices found.{' '}
+                  <a href="/voices" className="text-fantom-blue hover:underline">
+                    Create a voice clone
+                  </a>{' '}
+                  first.
+                </p>
+              )}
             </div>
           </div>
 
@@ -528,12 +578,19 @@ export default function ShortsCreatePage() {
           >
             {generatingScript ? (
               <span className="flex items-center gap-2">
-                <Spinner size="sm" /> Generating script...
+                <Spinner size="sm" /> Generating script &amp; captions…
               </span>
+            ) : suggestedCaptions.length > 0 ? (
+              'Regenerate Script &amp; Captions'
             ) : (
-              'Generate Script with AI'
+              'Generate Script &amp; Captions with AI'
             )}
           </Button>
+          {photos.length === 0 && (
+            <p className="text-center text-xs text-fantom-text-muted">
+              Add photos first to enable AI generation
+            </p>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="script">Voiceover script</Label>
@@ -541,7 +598,7 @@ export default function ShortsCreatePage() {
               id="script"
               value={script}
               onChange={(e) => setScript(e.target.value)}
-              placeholder="Your voiceover script will appear here — or type your own..."
+              placeholder="Your voiceover script will appear here — or type your own…"
               rows={6}
               className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/50 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
             />
@@ -549,48 +606,55 @@ export default function ShortsCreatePage() {
         </CardContent>
       </Card>
 
-      {/* ── Captions ────────────────────────────────────────────────────────── */}
-      {(suggestedCaptions.length > 0 || script) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Caption</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {suggestedCaptions.length > 0 ? (
-              <CaptionSelector
-                captions={suggestedCaptions}
-                selected={captionText}
-                onSelect={setCaptionText}
-                custom={customCaption}
-                onCustomChange={setCustomCaption}
-              />
-            ) : (
+      {/* ── Captions — always visible ─────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Caption</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {suggestedCaptions.length > 0 ? (
+            <CaptionSelector
+              captions={suggestedCaptions}
+              selected={captionText}
+              onSelect={setCaptionText}
+              custom={customCaption}
+              onCustomChange={setCustomCaption}
+            />
+          ) : (
+            <>
+              <p className="text-xs text-fantom-text-muted">
+                Generate the script above to get 5 AI caption suggestions, or write your own below.
+              </p>
               <div className="space-y-1.5">
                 <Label htmlFor="caption">Caption text</Label>
                 <Input
                   id="caption"
                   value={captionText}
                   onChange={(e) => setCaptionText(e.target.value)}
-                  placeholder="Short overlay text (≤12 words)..."
+                  placeholder="Short overlay text (≤12 words)…"
                 />
               </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Submit ──────────────────────────────────────────────────────────── */}
-      <div className="flex justify-end gap-3 pb-8">
-        <Button variant="secondary" onClick={() => router.back()} disabled={submitting}>
+      <div className="flex items-center justify-end gap-3 pb-8">
+        {!voiceCloneId && (
+          <p className="text-sm text-fantom-text-muted">Select a voice to enable rendering</p>
+        )}
+        <Button variant="ghost" onClick={() => router.back()} disabled={submitting}>
           Cancel
         </Button>
         <Button
           onClick={handleSubmit}
-          disabled={submitting || photos.length === 0 || !script.trim()}
+          disabled={submitting || !canSubmit}
+          title={!voiceCloneId ? 'Select a voice first' : !script.trim() ? 'Generate or write a script first' : ''}
         >
           {submitting ? (
             <span className="flex items-center gap-2">
-              <Spinner size="sm" /> Creating...
+              <Spinner size="sm" /> Creating…
             </span>
           ) : (
             'Create & Render'
