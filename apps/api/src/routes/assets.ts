@@ -11,7 +11,20 @@ import { logEvent } from '@fantom/observability'
 
 const ALLOWED_MIME: Record<string, readonly string[]> = {
   image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/avif'],
-  audio: ['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/aac', 'audio/flac'],
+  audio: [
+    'audio/mpeg',     // .mp3
+    'audio/mp3',      // .mp3 alternate
+    'audio/mp4',      // .m4a modern
+    'audio/x-m4a',    // .m4a legacy (iPhone Voice Memos)
+    'audio/m4a',      // .m4a alternate spelling
+    'audio/wav',      // .wav
+    'audio/x-wav',    // .wav alternate
+    'audio/wave',     // .wav alternate
+    'audio/webm',     // .webm
+    'audio/ogg',      // .ogg
+    'audio/flac',     // .flac
+    'audio/aac',      // .aac
+  ],
   video: ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/mpeg'],
   document: [
     'application/pdf',

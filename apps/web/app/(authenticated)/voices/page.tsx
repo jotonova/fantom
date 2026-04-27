@@ -352,7 +352,7 @@ function CloneVoiceWizard({ onClose, onReady }: { onClose: () => void; onReady: 
           {step === 'upload' && (
             <div className="space-y-4">
               <p className="text-sm text-fantom-text-muted">
-                Upload a clear audio sample (30–120 seconds). MP3, WAV, or M4A. Quiet background, no music.
+                Upload a clear audio recording. MP3, WAV, M4A, or OGG. Aim for 60+ seconds — no background music, minimal room noise.
               </p>
               <Button onClick={() => fileRef.current?.click()} disabled={uploading} className="w-full">
                 {uploading ? <><Spinner size="sm" /><span className="ml-2">Uploading…</span></> : 'Choose audio file'}
@@ -396,7 +396,7 @@ function CloneVoiceWizard({ onClose, onReady }: { onClose: () => void; onReady: 
                   <Spinner size="lg" />
                   <p className="text-fantom-text">Training your voice clone…</p>
                   <p className="text-sm text-fantom-text-muted">
-                    Status: <span className="capitalize">{cloneStatus}</span> — this takes 30–120 seconds.
+                    Status: <span className="capitalize">{cloneStatus}</span> — typically takes 1–3 minutes.
                   </p>
                 </>
               ) : (
