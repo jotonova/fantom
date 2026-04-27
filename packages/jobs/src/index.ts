@@ -16,6 +16,7 @@ export const JobKind = {
   RENDER_VIRTUAL_TOUR: 'render_virtual_tour',
   RENDER_FLIP_VIDEO: 'render_flip_video',
   RENDER_YOUTUBE_EDIT: 'render_youtube_edit',
+  RENDER_SHORT_VIDEO: 'render_short_video',
 } as const
 
 export type JobKindValue = (typeof JobKind)[keyof typeof JobKind]
@@ -75,6 +76,7 @@ export function getWorker(handler: Processor<QueuePayload>): Worker<QueuePayload
 // ── Job kind constants ────────────────────────────────────────────────────────
 
 export const VOICE_CLONE_TRAIN = 'voice_clone_train' as const
+export const SHORT_POST_SCHEDULED = 'short_post_scheduled' as const
 
 // ── Enqueue render job ────────────────────────────────────────────────────────
 
@@ -106,6 +108,35 @@ export async function enqueueVoiceClone(opts: {
   tenantId: string
 }): Promise<void> {
   await enqueueJob({ jobId: opts.cloneId, tenantId: opts.tenantId, kind: VOICE_CLONE_TRAIN })
+}
+
+// ── Enqueue short video render ────────────────────────────────────────────────
+
+export async function enqueueShortRender(opts: {
+  jobId: string
+  tenantId: string
+}): Promise<void> {
+  await enqueueJob({ jobId: opts.jobId, tenantId: opts.tenantId, kind: JobKind.RENDER_SHORT_VIDEO })
+}
+
+// ── Enqueue scheduled short post ──────────────────────────────────────────────
+// Fired with a delay so it executes at the target posting time.
+
+export async function enqueueScheduledShortPost(opts: {
+  shortsJobId: string
+  tenantId: string
+  delayMs: number
+}): Promise<void> {
+  const queue = getQueue()
+  // Use shortsJobId as BullMQ job ID so we can deduplicate / cancel later.
+  const existing = await queue.getJob(`scheduled:${opts.shortsJobId}`)
+  if (existing) await existing.remove()
+
+  await queue.add(
+    SHORT_POST_SCHEDULED,
+    { jobId: opts.shortsJobId, tenantId: opts.tenantId },
+    { jobId: `scheduled:${opts.shortsJobId}`, delay: opts.delayMs },
+  )
 }
 
 // ── Distribute queue singleton ────────────────────────────────────────────────

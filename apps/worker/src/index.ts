@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { startHealthServer } from './health.js'
 import { db, pool } from '@fantom/db'
-import { getWorker, getDistributeWorker, enqueueDistribution, JobKind, VOICE_CLONE_TRAIN } from '@fantom/jobs'
+import { getWorker, getDistributeWorker, enqueueDistribution, JobKind, VOICE_CLONE_TRAIN, SHORT_POST_SCHEDULED } from '@fantom/jobs'
 import type { QueuePayload, DistributePayload } from '@fantom/jobs'
 import type { Job as BullJob } from 'bullmq'
 import { sql } from 'drizzle-orm'
@@ -16,6 +16,7 @@ import { logEvent } from '@fantom/observability'
 import { FfmpegProvider } from './providers/ffmpegProvider.js'
 import { RemotionProvider } from './providers/remotionProvider.js'
 import { CapCutProvider } from './providers/capcutProvider.js'
+import { ShortVideoProvider } from './providers/shortVideoProvider.js'
 import { WebhookDestination } from './destinations/webhookDestination.js'
 import { WebhookRetryableError } from './destinations/webhookDestination.js'
 import { YouTubeDestination } from './destinations/youtubeDestination.js'
@@ -36,6 +37,7 @@ import {
   getDistributionRow,
   patchDistribution,
   getAssetRow,
+  patchShortsJob,
 } from './lib/db.js'
 import type { DestinationKind } from '@fantom/distribution-bus'
 
@@ -64,6 +66,7 @@ const renderBus = new RenderBus()
   .register(new FfmpegProvider())
   .register(new RemotionProvider())
   .register(new CapCutProvider())
+  .register(new ShortVideoProvider())
 
 console.log(`fantom-worker: render bus providers: ${renderBus.registeredNames().join(', ')}`)
 
@@ -139,10 +142,44 @@ async function triggerAutoPublish(opts: {
 
 // ── Render dispatcher ─────────────────────────────────────────────────────────
 
+async function dispatchShortPost(bullJob: BullJob<QueuePayload>): Promise<void> {
+  // SHORT_POST_SCHEDULED fires at the scheduled posting time.
+  // The shorts_job was already approved — trigger the webhook destination here.
+  const { jobId: shortsJobId, tenantId } = bullJob.data
+  console.log(`fantom-worker: short_post_scheduled fired for shortsJob ${shortsJobId}`)
+
+  try {
+    await patchShortsJob(shortsJobId, tenantId, {
+      status: 'posted',
+      postedAt: new Date(),
+    })
+    logEvent({
+      tenantId,
+      kind: 'short.posted',
+      severity: 'info',
+      subjectType: 'shorts_job',
+      subjectId: shortsJobId,
+      metadata: { trigger: 'scheduled' },
+    })
+  } catch (err) {
+    console.error(`[short:${shortsJobId}] scheduled post failed:`, err)
+    await patchShortsJob(shortsJobId, tenantId, {
+      status: 'failed',
+      errorMessage: err instanceof Error ? err.message : String(err),
+    }).catch(console.error)
+    throw err
+  }
+}
+
 async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
   // Voice clone training jobs arrive on the same queue — route them separately.
   if (bullJob.name === VOICE_CLONE_TRAIN) {
     return dispatchVoiceClone(bullJob)
+  }
+
+  // Scheduled short post — route separately.
+  if (bullJob.name === SHORT_POST_SCHEDULED) {
+    return dispatchShortPost(bullJob)
   }
 
   const { jobId, tenantId } = bullJob.data
@@ -205,6 +242,17 @@ async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
     console.log(
       `[job:${jobId}] video asset created ${videoAsset.id} — ${getPublicUrl(result.r2Key)}`,
     )
+
+    // For render_short_video: update the shorts_job record with the output asset
+    // and transition it to 'rendered' so the preview page can show the video.
+    if (kind === JobKind.RENDER_SHORT_VIDEO && typeof job.input['shortsJobId'] === 'string') {
+      await patchShortsJob(job.input['shortsJobId'], tenantId, {
+        outputAssetId: videoAsset.id,
+        status: 'rendered',
+      }).catch((err) => {
+        console.error(`[job:${jobId}] failed to update shorts_job:`, err)
+      })
+    }
 
     // Auto-publish trigger — must happen BEFORE status='completed' so any
     // downstream system that polls on completed sees distributions already queued.

@@ -13,9 +13,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fantom/ai-scripts": "workspace:*",
     "@fantom/db": "workspace:*",
     "@fantom/jobs": "workspace:*",
     "@fantom/distribution-bus": "workspace:*",
+    "@fantom/music": "workspace:*",
     "@fantom/observability": "workspace:*",
     "@fantom/render-bus": "workspace:*",
     "@fantom/storage": "workspace:*",

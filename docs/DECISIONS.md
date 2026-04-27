@@ -806,3 +806,66 @@ Adding a new queue requires a new BullMQ `Queue` + `Worker` setup, a new Redis c
 - A future migration can add a `null`-tenant-safe design for `alert_throttle` if system-event alerting becomes important (tracked in ADR-013).
 
 ---
+
+## ADR-015: `shorts_jobs` as a Dedicated Table
+
+**Status:** Accepted
+**Date:** 2026-04-26
+
+### Context
+
+M1.P2.a introduces a new content type — short-form vertical video (9:16, ≤2 min). It requires fields that are specific to shorts (photo array, script, caption variants, vibe, music preference, scheduling window) and a lifecycle that diverges from the generic `jobs` table (draft → rendering → rendered → approved/scheduled → posted).
+
+Two options were considered:
+
+1. Extend the existing `jobs` table with nullable short-specific columns and store the full lifecycle state in `jobs.status`.
+2. Create a dedicated `shorts_jobs` table that owns the short lifecycle, linked to a `jobs` row for the render phase.
+
+### Decision
+
+Create a dedicated `shorts_jobs` table. The `jobs` table is used only for the render phase (`render_short_video` job kind). `shorts_jobs` owns the full short lifecycle.
+
+### Reasoning
+
+- **Schema clarity:** The `jobs` table has 20+ columns. Adding another ~12 nullable short-specific columns would make the table unwieldy and hard to reason about.
+- **Different lifecycle states:** Shorts have a rich lifecycle (draft → rendering → rendered → approved → scheduled → posted) that does not map cleanly to the 6-value `job_status` enum.
+- **Photo array:** `jobs.input` is generic JSONB. Storing an ordered array of asset IDs in JSONB works but loses type safety and indexability. A typed `uuid[]` column in `shorts_jobs` is cleaner.
+- **Scheduling:** The 3–5pm posting window is a shorts-specific concept. Storing `scheduled_for` and `posted_at` in `shorts_jobs` is more semantically clear than overloading `jobs`.
+- **Auditability:** The `shorts_jobs` table links to the `jobs` row via `render_job_id`, preserving the full render audit trail while keeping short-specific metadata in the right place.
+
+### Consequences
+
+- Two tables to update during render completion: the worker's `dispatchRender` hook patches `shorts_jobs` after `createAssetRecord()` completes.
+- The `jobs` table continues to be the source of truth for render progress and retry logic.
+- Future short-specific features (caption variants storage, A/B testing, re-render history) have a clean home in `shorts_jobs` without polluting the shared `jobs` table.
+
+---
+
+## ADR-016: Anthropic Claude for Short Script Generation
+
+**Status:** Accepted
+**Date:** 2026-04-26
+
+### Context
+
+Short scripts require creative, vibe-appropriate voiceover copy (15–120 seconds) and 5 caption variant suggestions. The director locked this to Anthropic Claude — not OpenAI — as the AI provider.
+
+### Decision
+
+Use `@anthropic-ai/sdk` with model `claude-haiku-4-5-20251001` for script and caption generation. Wrapped in the `@fantom/ai-scripts` package.
+
+### Reasoning
+
+- **Director mandate:** Anthropic Claude is the explicit platform AI, aligned with the broader Fantom toolchain (Claude Code is the development assistant).
+- **Haiku model:** Fast, cost-efficient, sufficient for structured creative copy. The prompt requests JSON output; Haiku reliably produces it.
+- **Package isolation:** Wrapping in `@fantom/ai-scripts` keeps the Anthropic SDK dependency out of the main API bundle. The package can be extended for other AI generation tasks (listing descriptions, market update summaries) without coupling to a specific route.
+- **Graceful degradation:** The `/shorts/generate-script` endpoint is a helper — script generation failure returns a 502 to the frontend without affecting the core shorts_job creation flow. Users can always type their own script.
+
+### Consequences
+
+- `ANTHROPIC_API_KEY` must be set in the API environment (Render).
+- The `claude-haiku-4-5-20251001` model ID is pinned; update in `packages/ai-scripts/src/index.ts` when a newer Haiku is available.
+- Prompt structure (vibe descriptions, word count formula, JSON schema) lives in `packages/ai-scripts/src/index.ts` and can be iterated without API route changes.
+
+---
+

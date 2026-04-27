@@ -1,5 +1,5 @@
-import { db, jobs, assets, voiceClones, tenants, tenantSettings, distributions } from '@fantom/db'
-import type { Job as DbJob, Asset, VoiceClone, Distribution } from '@fantom/db'
+import { db, jobs, assets, voiceClones, tenants, tenantSettings, distributions, shortsJobs, brandKits } from '@fantom/db'
+import type { Job as DbJob, Asset, VoiceClone, Distribution, ShortsJob, BrandKit } from '@fantom/db'
 import type { DestinationKind } from '@fantom/distribution-bus'
 import { and, eq, sql } from 'drizzle-orm'
 
@@ -213,6 +213,56 @@ export async function patchDistribution(
       .where(eq(distributions.id, distributionId))
   })
 }
+
+// ── Shorts job helpers ─────────────────────────────────────────────────────────
+
+export async function getShortsJobRow(
+  shortsJobId: string,
+  tenantId: string,
+): Promise<ShortsJob | undefined> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    const [row] = await tx
+      .select()
+      .from(shortsJobs)
+      .where(eq(shortsJobs.id, shortsJobId))
+      .limit(1)
+    return row
+  })
+}
+
+export async function patchShortsJob(
+  shortsJobId: string,
+  tenantId: string,
+  values: Partial<typeof shortsJobs.$inferInsert>,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    await tx
+      .update(shortsJobs)
+      .set({ ...values, updatedAt: new Date() })
+      .where(eq(shortsJobs.id, shortsJobId))
+  })
+}
+
+// ── Brand kit helpers ──────────────────────────────────────────────────────────
+
+export async function getBrandKitRow(
+  brandKitId: string,
+  tenantId: string,
+): Promise<BrandKit | undefined> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    const [row] = await tx
+      .select()
+      .from(brandKits)
+      .where(eq(brandKits.id, brandKitId))
+      .limit(1)
+    return row
+  })
+}
+
+// ── Distribution helpers ───────────────────────────────────────────────────────
 
 export async function createDistributionRecord(params: {
   tenantId: string

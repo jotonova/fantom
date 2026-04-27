@@ -25,6 +25,10 @@ const NAV_ITEMS = [
   { label: 'Events', href: '/events' },
 ]
 
+const STUDIO_NAV_ITEMS = [
+  { label: 'Shorts', href: '/studio/shorts' },
+]
+
 const ADMIN_NAV_ITEMS = [
   { label: 'Admin', href: '/admin' },
 ]
@@ -93,6 +97,31 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
               </a>
             )
           })}
+          {STUDIO_NAV_ITEMS.length > 0 && (
+            <>
+              <div className="my-2 border-t border-fantom-steel-border" />
+              <p className="px-3 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wider text-fantom-text-muted">
+                Studio
+              </p>
+              {STUDIO_NAV_ITEMS.map((item) => {
+                const active = pathname === item.href || pathname.startsWith(item.href + '/')
+                return (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? 'page' : undefined}
+                    className={`flex items-center rounded-[6px] px-3 py-2 text-sm transition-colors ${
+                      active
+                        ? 'bg-fantom-steel text-fantom-text'
+                        : 'text-fantom-text-muted hover:bg-fantom-steel hover:text-fantom-text'
+                    }`}
+                  >
+                    {item.label}
+                  </a>
+                )
+              })}
+            </>
+          )}
           {tenant?.role === 'platform_admin' && (
             <>
               <div className="my-2 border-t border-fantom-steel-border" />
