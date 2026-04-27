@@ -72,6 +72,10 @@ export function getWorker(handler: Processor<QueuePayload>): Worker<QueuePayload
   })
 }
 
+// ── Job kind constants ────────────────────────────────────────────────────────
+
+export const VOICE_CLONE_TRAIN = 'voice_clone_train' as const
+
 // ── Enqueue render job ────────────────────────────────────────────────────────
 
 export async function enqueueJob(opts: {
@@ -91,6 +95,17 @@ export async function enqueueJob(opts: {
     { jobId: opts.jobId, tenantId: opts.tenantId },
     { jobId: opts.jobId }, // use DB job ID as the BullMQ job ID for easy lookup
   )
+}
+
+// ── Enqueue voice clone training ──────────────────────────────────────────────
+// Uses the same fantom-render queue; the worker dispatches by bullJob.name.
+// QueuePayload.jobId = cloneId so the worker can look up the voice_clone row.
+
+export async function enqueueVoiceClone(opts: {
+  cloneId: string
+  tenantId: string
+}): Promise<void> {
+  await enqueueJob({ jobId: opts.cloneId, tenantId: opts.tenantId, kind: VOICE_CLONE_TRAIN })
 }
 
 // ── Distribute queue singleton ────────────────────────────────────────────────

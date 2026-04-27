@@ -765,3 +765,44 @@ This is the second time Row-Level Security has blocked a feature ship mid-deploy
 - Future tables must follow this pattern; `WITH CHECK (true)` is a red flag in code review.
 
 ---
+
+## ADR-014: Brand Kit Storage and Async Voice Clone Training
+
+**Status:** Accepted
+**Date:** 2026-04-25
+
+### Context
+
+M1.P1 introduced two related features: (1) a brand kit entity that stores visual identity per tenant, and (2) personal voice clone training where a user submits an audio sample and ElevenLabs trains a custom voice model.
+
+**Brand kits:** A tenant may have many kits but exactly one default at any time. The default needs to be enforced at the DB layer to prevent races between concurrent `set-default` API calls.
+
+**Voice clone training:** ElevenLabs clone training takes 30–120 seconds. Doing this synchronously in the API request handler would hold an HTTP connection open for the full duration, conflict with Render's 30-second request timeout, and provide no retry capability on failure.
+
+### Decisions
+
+**Brand kit `is_default` enforcement**
+
+Use a partial unique index `WHERE is_default = true` rather than a separate `default_kit_id` column on the `tenants` table. The partial unique index guarantees at most one default per tenant at the DB level without requiring a schema-level FK that would complicate seeding and deletion. The `POST /brand-kits/:id/set-default` endpoint demotes all other kits before promoting the target, both in the same transaction, so the constraint is never violated mid-update.
+
+**Voice clone training via BullMQ**
+
+Route training jobs through the existing `fantom-render` BullMQ queue rather than creating a new queue. The dispatch function in the worker (`dispatchRender`) checks `bullJob.name === 'voice_clone_train'` and routes to a dedicated `dispatchVoiceClone` handler. The `QueuePayload.jobId` field carries the `voice_clone` row ID (not a `jobs` table ID) — the existing `enqueueJob` signature supports this without schema changes.
+
+Voice clone records use the existing `voice_clones` table extended with `is_personal`, `owner_user_id`, and `clone_failed_reason` columns. The status enum gains a `'training'` value (between `'pending'` and `'processing'`) to distinguish the async pre-ElevenLabs state.
+
+The frontend wizard polls `GET /voices/clones/:id/status` every 5 seconds while status is `training` or `processing`, then transitions to a success or error state.
+
+### Why not a separate queue for voice clone jobs?
+
+Adding a new queue requires a new BullMQ `Queue` + `Worker` setup, a new Redis connection pair, and separate health monitoring. The training jobs are low-volume (one per user submission), so sharing the render queue and multiplexing by job name is simpler and sufficient. If training volume grows to the point where it saturates the render queue, a dedicated queue can be split out at that time.
+
+### Consequences
+
+- Brand kit `is_default` is enforced at DB level — concurrent `set-default` calls cannot create two defaults.
+- Voice clone training is asynchronous and retried up to 3 times on failure (BullMQ default).
+- Clone failure reason is stored in `clone_failed_reason` and surfaced to the user in the wizard.
+- The `fantom-render` worker now handles two job categories; `bullJob.name` is the dispatch key.
+- A future migration can add a `null`-tenant-safe design for `alert_throttle` if system-event alerting becomes important (tracked in ADR-013).
+
+---

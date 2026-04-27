@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { startHealthServer } from './health.js'
 import { db, pool } from '@fantom/db'
-import { getWorker, getDistributeWorker, enqueueDistribution, JobKind } from '@fantom/jobs'
+import { getWorker, getDistributeWorker, enqueueDistribution, JobKind, VOICE_CLONE_TRAIN } from '@fantom/jobs'
 import type { QueuePayload, DistributePayload } from '@fantom/jobs'
 import type { Job as BullJob } from 'bullmq'
 import { sql } from 'drizzle-orm'
@@ -23,6 +23,7 @@ import { FacebookDestination } from './destinations/facebookDestination.js'
 import { InstagramDestination } from './destinations/instagramDestination.js'
 import { MlsDestination } from './destinations/mlsDestination.js'
 import { getPublicUrl } from '@fantom/storage'
+import { dispatchVoiceClone } from './handlers/voiceCloneTrain.js'
 import {
   getJobRow,
   patchJob,
@@ -139,6 +140,11 @@ async function triggerAutoPublish(opts: {
 // ── Render dispatcher ─────────────────────────────────────────────────────────
 
 async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
+  // Voice clone training jobs arrive on the same queue — route them separately.
+  if (bullJob.name === VOICE_CLONE_TRAIN) {
+    return dispatchVoiceClone(bullJob)
+  }
+
   const { jobId, tenantId } = bullJob.data
 
   const job = await getJobRow(jobId, tenantId)

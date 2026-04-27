@@ -94,6 +94,20 @@ export async function getVoiceCloneRow(
   })
 }
 
+export async function patchVoiceClone(
+  cloneId: string,
+  tenantId: string,
+  values: Partial<typeof voiceClones.$inferInsert>,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    await tx
+      .update(voiceClones)
+      .set({ ...values, updatedAt: new Date() })
+      .where(eq(voiceClones.id, cloneId))
+  })
+}
+
 // ── Tenant helpers ─────────────────────────────────────────────────────────────
 
 export async function getTenantSlug(tenantId: string): Promise<string> {

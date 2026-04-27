@@ -8,6 +8,7 @@ import { listVoices, cloneVoice, synthesize, deleteVoice, getVoice } from '@fant
 import type { VoiceListItem } from '@fantom/voice'
 import { requireAuth } from '../plugins/auth.js'
 import { logEvent } from '@fantom/observability'
+import { enqueueVoiceClone } from '@fantom/jobs'
 
 // ── Simple in-memory cache for ElevenLabs defaults ────────────────────────────
 
@@ -310,6 +311,105 @@ const voiceRoutes: FastifyPluginAsync = async (fastify) => {
     })
     return reply.send({ ...asset, publicUrl: getPublicUrl(asset.r2Key) })
   })
+
+  // POST /voices/clones/start ──────────────────────────────────────────────────
+  // Async voice clone training — creates a voice_clone record (status='training')
+  // and enqueues a BullMQ job on the fantom-render queue. The worker fetches the
+  // audio from R2, calls ElevenLabs, and updates the record when done.
+  fastify.post<{
+    Body: { name: string; description?: string; trainingAudioAssetId: string }
+  }>('/voices/clones/start', { preHandler: requireAuth }, async (request, reply) => {
+    const { name, description, trainingAudioAssetId } = request.body ?? {}
+
+    if (typeof name !== 'string' || !name.trim()) {
+      return reply.code(400).send({ error: 'name is required' })
+    }
+    if (typeof trainingAudioAssetId !== 'string' || !trainingAudioAssetId) {
+      return reply.code(400).send({ error: 'trainingAudioAssetId is required' })
+    }
+
+    const tenantId = request.tenantId!
+    const userId = request.user!.id
+
+    // Verify the source asset exists and is audio.
+    const sourceAsset = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+      const [row] = await tx
+        .select()
+        .from(assets)
+        .where(eq(assets.id, trainingAudioAssetId))
+        .limit(1)
+      return row
+    })
+
+    if (!sourceAsset) return reply.code(404).send({ error: 'Training audio asset not found' })
+    if (sourceAsset.kind !== 'audio') {
+      return reply.code(400).send({ error: 'Training asset must be an audio file' })
+    }
+
+    const [clone] = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+      return tx
+        .insert(voiceClones)
+        .values({
+          tenantId,
+          name: name.trim(),
+          description: description ?? null,
+          provider: 'elevenlabs',
+          sourceAssetId: trainingAudioAssetId,
+          status: 'training',
+          isPersonal: true,
+          ownerUserId: userId,
+          createdByUserId: userId,
+        })
+        .returning()
+    })
+
+    if (!clone) return reply.code(500).send({ error: 'Failed to create voice clone record' })
+
+    await enqueueVoiceClone({ cloneId: clone.id, tenantId })
+
+    logEvent({
+      tenantId,
+      kind: 'voice_clone.training_queued',
+      severity: 'info',
+      actorUserId: userId,
+      subjectType: 'voice_clone',
+      subjectId: clone.id,
+      metadata: { name: clone.name },
+    })
+
+    return reply.code(201).send(clone)
+  })
+
+  // GET /voices/clones/:id/status ──────────────────────────────────────────────
+  // Lightweight polling endpoint — returns just the status fields so the wizard
+  // can poll without re-fetching the full voice list.
+  fastify.get<{ Params: { id: string } }>(
+    '/voices/clones/:id/status',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { id } = request.params
+      const tenantId = request.tenantId!
+
+      const [clone] = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        return tx
+          .select({
+            id: voiceClones.id,
+            status: voiceClones.status,
+            cloneFailedReason: voiceClones.cloneFailedReason,
+            providerVoiceId: voiceClones.providerVoiceId,
+          })
+          .from(voiceClones)
+          .where(eq(voiceClones.id, id))
+          .limit(1)
+      })
+
+      if (!clone) return reply.code(404).send({ error: 'Voice clone not found' })
+      return reply.send(clone)
+    },
+  )
 
   // DELETE /voices/:id ─────────────────────────────────────────────────────────
   fastify.delete<{ Params: { id: string } }>(

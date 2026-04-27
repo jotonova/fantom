@@ -18,6 +18,7 @@ import {
 const NAV_ITEMS = [
   { label: 'Dashboard', href: '/dashboard' },
   { label: 'Library', href: '/library' },
+  { label: 'Brand Kits', href: '/brand-kits' },
   { label: 'Voices', href: '/voices' },
   { label: 'Jobs', href: '/jobs' },
   { label: 'Distributions', href: '/distributions' },

@@ -1,4 +1,4 @@
-import { index, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { boolean, index, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { tenants } from './tenants.js'
 import { users } from './users.js'
 import { assets } from './assets.js'
@@ -19,6 +19,7 @@ export const voiceCloneDefaultKindEnum = pgEnum('voice_clone_default_kind', [
 
 export const voiceCloneStatusEnum = pgEnum('voice_clone_status', [
   'pending',
+  'training',
   'processing',
   'ready',
   'failed',
@@ -40,6 +41,10 @@ export const voiceClones = pgTable(
       onDelete: 'set null',
     }),
     status: voiceCloneStatusEnum('status').notNull().default('pending'),
+    // Personal clone fields — set when the user trains their own voice (async path)
+    isPersonal: boolean('is_personal').notNull().default(false),
+    ownerUserId: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
+    cloneFailedReason: text('clone_failed_reason'),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
