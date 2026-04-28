@@ -109,7 +109,7 @@ export async function generateMotionClip(input: GenerateMotionClipInput): Promis
     duration,
     ratio: '768:1280', // 9:16 portrait for Shorts
   }
-  if (input.promptText) body['promptText'] = input.promptText
+  body['promptText'] = input.promptText ?? ''
 
   const res = await fetch(`${RUNWAY_BASE_URL}/image_to_video`, {
     method: 'POST',
