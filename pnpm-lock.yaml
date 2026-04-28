@@ -142,9 +142,15 @@ importers:
       '@fantom/render-bus':
         specifier: workspace:*
         version: link:../../packages/render-bus
+      '@fantom/runway':
+        specifier: workspace:*
+        version: link:../../packages/runway
       '@fantom/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@fantom/video-editor':
+        specifier: workspace:*
+        version: link:../../packages/video-editor
       '@fantom/voice':
         specifier: workspace:*
         version: link:../../packages/voice
@@ -292,6 +298,15 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  packages/runway:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.39
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
   packages/shared:
     devDependencies:
       typescript:
@@ -341,6 +356,25 @@ importers:
       '@types/react-dom':
         specifier: ^18.3.0
         version: 18.3.7(@types/react@18.3.28)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
+  packages/video-editor:
+    dependencies:
+      ffmpeg-static:
+        specifier: ^5.2.0
+        version: 5.3.0
+      fluent-ffmpeg:
+        specifier: ^2.1.3
+        version: 2.1.3
+    devDependencies:
+      '@types/fluent-ffmpeg':
+        specifier: ^2.1.27
+        version: 2.1.28
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.39
       typescript:
         specifier: ^5.4.0
         version: 5.9.3

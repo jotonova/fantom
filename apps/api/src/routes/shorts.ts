@@ -87,8 +87,8 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     if (typeof brandKitName !== 'string' || !brandKitName.trim()) {
       return reply.code(400).send({ error: 'brandKitName is required' })
     }
-    if (typeof photoCount !== 'number' || photoCount < 1 || photoCount > 20) {
-      return reply.code(400).send({ error: 'photoCount must be 1–20' })
+    if (typeof photoCount !== 'number' || photoCount < 1 || photoCount > 30) {
+      return reply.code(400).send({ error: 'photoCount must be 1–30' })
     }
     if (typeof targetDurationSeconds !== 'number' || targetDurationSeconds < 15 || targetDurationSeconds > 120) {
       return reply.code(400).send({ error: 'targetDurationSeconds must be 15–120' })
@@ -164,7 +164,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
         .values({
           tenantId,
           createdByUserId: userId,
-          photoAssetIds,
+          inputAssetIds: photoAssetIds,
           vibe: vibe as ShortsJob['vibe'],
           script: typeof script === 'string' ? script : null,
           scriptSource: (scriptSource as ShortsJob['scriptSource']) ?? 'ai_generated',
@@ -306,7 +306,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       patch.vibe = body.vibe as ShortsJob['vibe']
     }
     if (Array.isArray(body.photoAssetIds) && body.photoAssetIds.length > 0) {
-      patch.photoAssetIds = body.photoAssetIds
+      patch.inputAssetIds = body.photoAssetIds
     }
 
     if (Object.keys(patch).length === 0) {
@@ -346,7 +346,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
 
       if (!existing) return reply.code(404).send({ error: 'Shorts job not found' })
       if (!existing.script) return reply.code(422).send({ error: 'Script is required before rendering' })
-      if (!existing.photoAssetIds || existing.photoAssetIds.length === 0) {
+      if (!existing.inputAssetIds || existing.inputAssetIds.length === 0) {
         return reply.code(422).send({ error: 'At least one photo is required before rendering' })
       }
       if (['rendering', 'approved', 'scheduled', 'posted'].includes(existing.status)) {

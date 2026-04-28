@@ -324,7 +324,7 @@ export class ShortVideoProvider implements RenderProvider {
       if (!shortsJob) throw new Error(`ShortsJob ${shortsJobId} not found`)
 
       const {
-        photoAssetIds,
+        inputAssetIds,
         voiceCloneId,
         brandKitId,
         script,
@@ -332,7 +332,7 @@ export class ShortVideoProvider implements RenderProvider {
         musicVibe,
       } = shortsJob
 
-      if (!photoAssetIds || photoAssetIds.length === 0) {
+      if (!inputAssetIds || inputAssetIds.length === 0) {
         throw new Error('Shorts job has no photos')
       }
       if (!script) throw new Error('Shorts job has no script')
@@ -372,11 +372,11 @@ export class ShortVideoProvider implements RenderProvider {
       log(`Voice duration: ${voiceDuration.toFixed(1)}s`)
 
       // ── 5. Download photos ────────────────────────────────────────────────
-      log(`Downloading ${photoAssetIds.length} photos...`)
+      log(`Downloading ${inputAssetIds.length} photos...`)
       const photoPaths: string[] = []
 
-      for (let i = 0; i < photoAssetIds.length; i++) {
-        const assetId = photoAssetIds[i]!
+      for (let i = 0; i < inputAssetIds.length; i++) {
+        const assetId = inputAssetIds[i]!
         const asset = await getAssetRow(assetId, tenantId)
         if (!asset) throw new Error(`Photo asset ${assetId} not found`)
 
@@ -433,6 +433,7 @@ export class ShortVideoProvider implements RenderProvider {
       const N = photoPaths.length
       const c = CROSSFADE_DURATION
       const segDur = N > 1 ? (voiceDuration + c * (N - 1)) / N : voiceDuration
+      // (N is photo count derived from inputAssetIds)
 
       const voiceInputIdx = N
       const musicInputIdx = tmpMusic !== null ? N + 1 : null

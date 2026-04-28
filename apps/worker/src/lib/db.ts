@@ -1,7 +1,7 @@
-import { db, jobs, assets, voiceClones, tenants, tenantSettings, distributions, shortsJobs, brandKits } from '@fantom/db'
+import { db, jobs, assets, voiceClones, tenants, tenantSettings, distributions, shortsJobs, brandKits, runwayUsage } from '@fantom/db'
 import type { Job as DbJob, Asset, VoiceClone, Distribution, ShortsJob, BrandKit } from '@fantom/db'
 import type { DestinationKind } from '@fantom/distribution-bus'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, gte, lt, sql, sum } from 'drizzle-orm'
 
 // ── Job helpers ────────────────────────────────────────────────────────────────
 
@@ -289,4 +289,71 @@ export async function createDistributionRecord(params: {
   })
   if (!row) throw new Error('Failed to create distribution record')
   return row
+}
+
+// ── Runway budget helpers ──────────────────────────────────────────────────────
+
+export interface RunwayBudgetStatus {
+  available: boolean
+  spentUsd: number
+  capUsd: number
+  resetsAt: Date
+}
+
+/**
+ * Checks how much of the tenant's Runway monthly budget has been spent.
+ * Cap is read from RUNWAY_MONTHLY_CAP_USD env var (default $100).
+ * Both GUCs must be set so the INSERT path (which returns) works correctly.
+ */
+export async function checkRunwayBudget(tenantId: string): Promise<RunwayBudgetStatus> {
+  const capUsd = Number(process.env['RUNWAY_MONTHLY_CAP_USD'] ?? '100')
+
+  const now = new Date()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+
+  const row = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    await tx.execute(sql`SELECT set_config('app.is_platform_admin', 'true', true)`)
+    const [r] = await tx
+      .select({ total: sum(runwayUsage.costUsd) })
+      .from(runwayUsage)
+      .where(
+        and(
+          eq(runwayUsage.tenantId, tenantId),
+          gte(runwayUsage.billedAt, monthStart),
+          lt(runwayUsage.billedAt, monthEnd),
+        ),
+      )
+    return r
+  })
+
+  const spentUsd = row?.total != null ? Number(row.total) : 0
+  return { available: spentUsd < capUsd, spentUsd, capUsd, resetsAt: monthEnd }
+}
+
+/**
+ * Records a Runway usage entry. Non-skippable — throws if the insert fails.
+ * Both GUCs are set so the INSERT…RETURNING path works under RLS.
+ */
+export async function recordRunwayUsage(params: {
+  tenantId: string
+  shortsJobId: string | null
+  assetId: string
+  taskId: string
+  creditsUsed: number
+  costUsd: number
+}): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${params.tenantId}, true)`)
+    await tx.execute(sql`SELECT set_config('app.is_platform_admin', 'true', true)`)
+    await tx.insert(runwayUsage).values({
+      tenantId: params.tenantId,
+      shortsJobId: params.shortsJobId,
+      assetId: params.assetId,
+      taskId: params.taskId,
+      creditsUsed: params.creditsUsed,
+      costUsd: String(params.costUsd),
+    })
+  })
 }

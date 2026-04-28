@@ -17,6 +17,7 @@ import { FfmpegProvider } from './providers/ffmpegProvider.js'
 import { RemotionProvider } from './providers/remotionProvider.js'
 import { CapCutProvider } from './providers/capcutProvider.js'
 import { ShortVideoProvider } from './providers/shortVideoProvider.js'
+import { MultiModalRenderProvider } from './providers/multiModalRenderProvider.js'
 import { WebhookDestination } from './destinations/webhookDestination.js'
 import { WebhookRetryableError } from './destinations/webhookDestination.js'
 import { YouTubeDestination } from './destinations/youtubeDestination.js'
@@ -67,6 +68,7 @@ const renderBus = new RenderBus()
   .register(new RemotionProvider())
   .register(new CapCutProvider())
   .register(new ShortVideoProvider())
+  .register(new MultiModalRenderProvider())
 
 console.log(`fantom-worker: render bus providers: ${renderBus.registeredNames().join(', ')}`)
 

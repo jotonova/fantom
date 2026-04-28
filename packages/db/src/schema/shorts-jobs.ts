@@ -1,6 +1,7 @@
 import {
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -64,9 +65,16 @@ export const shortsJobs = pgTable(
     voiceCloneId: uuid('voice_clone_id').references(() => voiceClones.id, {
       onDelete: 'set null',
     }),
+    // Co-brand and compliance brand kits (optional overlays)
+    coBrandKitId: uuid('co_brand_kit_id').references(() => brandKits.id, {
+      onDelete: 'set null',
+    }),
+    complianceKitId: uuid('compliance_kit_id').references(() => brandKits.id, {
+      onDelete: 'set null',
+    }),
 
-    // Photo assets (ordered array of asset IDs)
-    photoAssetIds: uuid('photo_asset_ids')
+    // Input assets (ordered array — images sent to Runway, videos processed locally)
+    inputAssetIds: uuid('input_asset_ids')
       .array()
       .notNull()
       .default(sql`'{}'`),
@@ -80,8 +88,19 @@ export const shortsJobs = pgTable(
     captionSource: captionSourceEnum('caption_source').notNull().default('ai_generated'),
     captionText: text('caption_text'),
 
-    // Music
+    // Music & SFX
     musicVibe: text('music_vibe'),
+    sfxPrompt: text('sfx_prompt'),
+
+    // Motion hints: per-asset hints passed to Runway promptText
+    // Shape: Record<assetId, string>
+    motionHints: jsonb('motion_hints').$type<Record<string, string>>(),
+
+    // Per-asset render tracking (updated as Runway tasks complete)
+    // Shape: Record<assetId, { status: 'pending'|'processing'|'done'|'failed', taskId?: string }>
+    assetRenderStatus: jsonb('asset_render_status').$type<
+      Record<string, { status: string; taskId?: string }>
+    >(),
 
     // Duration
     targetDurationSeconds: integer('target_duration_seconds').notNull().default(60),
