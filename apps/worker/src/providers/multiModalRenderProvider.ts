@@ -7,6 +7,7 @@ import { synthesize } from '@fantom/voice'
 import { fetchMusic } from '@fantom/music'
 import type { MusicVibe } from '@fantom/music'
 import { generateMotionClip, waitForCompletion, BudgetExceededError } from '@fantom/runway'
+import type { RunwayTaskStatus } from '@fantom/runway'
 import { applyColorGrade, smartCrop, extractSpeechTranscript } from '@fantom/video-editor'
 import Ffmpeg from 'fluent-ffmpeg'
 import { CancelledError } from '@fantom/render-bus'
@@ -462,7 +463,7 @@ export class MultiModalRenderProvider implements RenderProvider {
 
           log(`[asset ${index + 1}] Runway task ${taskId} — waiting for completion...`)
           const clip = await waitForCompletion(taskId, {
-            onPoll: (status) => {
+            onPoll: (status: RunwayTaskStatus) => {
               log(`[asset ${index + 1}] Runway task ${taskId}: ${status.status}`)
             },
           })
