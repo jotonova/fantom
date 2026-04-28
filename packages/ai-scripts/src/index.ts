@@ -52,16 +52,7 @@ Vibe: ${input.vibe} — ${vibeDesc}
 Target word count for the voiceover: approximately ${approxWords} words.
 ${input.hint ? `Director's hint: ${input.hint}` : ''}
 
-Return a JSON object with EXACTLY these two fields and no other text:
-{
-  "script": "<the voiceover script, plain text, no stage directions>",
-  "suggestedCaptions": ["<caption 1>", "<caption 2>", "<caption 3>", "<caption 4>", "<caption 5>"]
-}
-
-Rules:
-- script: continuous prose spoken aloud, no formatting, no dashes, no bullet points
-- suggestedCaptions: exactly 5 short text overlays (≤12 words each) that could appear on screen during the video; each must stand alone as a punchy phrase
-- Return ONLY valid JSON, no markdown fences, no commentary`
+Write a compelling voiceover script and 3–5 short caption suggestions for the video.`
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -71,46 +62,51 @@ export async function generateShortScript(
 ): Promise<GenerateShortScriptResult> {
   const client = getClient()
 
-  const message = await client.messages.create({
+  const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 1024,
-    messages: [
+    max_tokens: 2048,
+    tools: [
       {
-        role: 'user',
-        content: buildPrompt(input),
+        name: 'emit_script',
+        description: 'Emit the generated short-form script and captions',
+        input_schema: {
+          type: 'object',
+          properties: {
+            script: {
+              type: 'string',
+              description: 'The voiceover script text — continuous prose spoken aloud, no stage directions, no formatting',
+            },
+            suggestedCaptions: {
+              type: 'array',
+              items: { type: 'string' },
+              description: '3–5 short text overlays (≤12 words each) that could appear on screen; each must stand alone as a punchy phrase',
+            },
+          },
+          required: ['script', 'suggestedCaptions'],
+        },
       },
     ],
+    tool_choice: { type: 'tool', name: 'emit_script' },
+    messages: [{ role: 'user', content: buildPrompt(input) }],
   })
 
-  // Extract text content from the response
-  const textBlock = message.content.find((b) => b.type === 'text')
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('Anthropic returned no text content')
+  const toolUseBlock = response.content.find((b) => b.type === 'tool_use')
+  if (!toolUseBlock || toolUseBlock.type !== 'tool_use' || toolUseBlock.name !== 'emit_script') {
+    throw new Error('Model did not return emit_script tool call')
   }
 
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(textBlock.text.trim())
-  } catch {
-    throw new Error(`Failed to parse Anthropic response as JSON: ${textBlock.text.slice(0, 200)}`)
+  const raw = toolUseBlock.input as Record<string, unknown>
+
+  if (typeof raw['script'] !== 'string' || !Array.isArray(raw['suggestedCaptions'])) {
+    throw new Error('emit_script tool input did not match expected schema')
   }
 
-  if (
-    typeof parsed !== 'object' ||
-    parsed === null ||
-    typeof (parsed as Record<string, unknown>)['script'] !== 'string' ||
-    !Array.isArray((parsed as Record<string, unknown>)['suggestedCaptions'])
-  ) {
-    throw new Error('Anthropic response did not match expected schema')
-  }
-
-  const result = parsed as { script: string; suggestedCaptions: unknown[] }
-  const suggestedCaptions = result.suggestedCaptions
+  const suggestedCaptions = (raw['suggestedCaptions'] as unknown[])
     .slice(0, 5)
     .map((c) => (typeof c === 'string' ? c : String(c)))
 
   return {
-    script: result.script,
+    script: raw['script'],
     suggestedCaptions,
   }
 }
