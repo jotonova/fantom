@@ -1,5 +1,5 @@
 // Runway Gen-3 Turbo client for Fantom
-// Generates 5-second portrait motion clips from still images (image-to-video).
+// Generates 5-second portrait motion clips from still images (image_to_video API).
 //
 // Pricing: 50 credits per 5s clip = $0.50 per clip (1 credit = $0.01 USD)
 // Budget cap: $100/month per tenant — enforced by caller before calling generateMotionClip()
@@ -98,7 +98,7 @@ function sleep(ms: number): Promise<void> {
 // ── API functions ──────────────────────────────────────────────────────────────
 
 /**
- * Submits an image-to-video task to Runway Gen-3 Turbo.
+ * Submits an image_to_video task to Runway Gen-3 Turbo.
  * Returns the task ID — use waitForCompletion() to get the output URL.
  */
 export async function generateMotionClip(input: GenerateMotionClipInput): Promise<string> {
@@ -111,7 +111,7 @@ export async function generateMotionClip(input: GenerateMotionClipInput): Promis
   }
   if (input.promptText) body['promptText'] = input.promptText
 
-  const res = await fetch(`${RUNWAY_BASE_URL}/image-to-video`, {
+  const res = await fetch(`${RUNWAY_BASE_URL}/image_to_video`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
@@ -119,7 +119,7 @@ export async function generateMotionClip(input: GenerateMotionClipInput): Promis
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
-    throw new RunwayApiError(`Runway image-to-video failed (${res.status}): ${text}`, res.status)
+    throw new RunwayApiError(`Runway image_to_video failed (${res.status}): ${text}`, res.status)
   }
 
   const json = (await res.json()) as { id?: string }
