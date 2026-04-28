@@ -27,6 +27,28 @@ const _require = createRequire(import.meta.url)
 const ffmpegBinary = _require('ffmpeg-static') as string | null
 if (ffmpegBinary) Ffmpeg.setFfmpegPath(ffmpegBinary)
 
+// ── Filter availability probe (cached at startup) ─────────────────────────────
+
+import { execFile } from 'node:child_process'
+
+/** Returns true if the installed ffmpeg binary supports the named filter. */
+function probeFilter(name: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const bin = ffmpegBinary ?? 'ffmpeg'
+    execFile(bin, ['-filters'], { timeout: 5000 }, (_err, stdout) => {
+      // Each line looks like "... xfade  VV->V  ..."
+      resolve(stdout.includes(` ${name} `) || stdout.includes(`\t${name} `))
+    })
+  })
+}
+
+// Resolved once at first render; safe because ffmpeg-static is immutable per deploy.
+let _drawTextAvailable: boolean | null = null
+async function isDrawTextAvailable(): Promise<boolean> {
+  if (_drawTextAvailable === null) _drawTextAvailable = await probeFilter('drawtext')
+  return _drawTextAvailable
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const OUTPUT_WIDTH = 1080
@@ -136,6 +158,7 @@ interface ComposeParams {
   voiceAudio: string
   voiceDuration: number
   musicAudio: string | null
+  /** Null, or null if drawtext unavailable in current ffmpeg build. */
   captionText: string | null
   fontPath: string | null
   logoPath: string | null
@@ -560,13 +583,16 @@ export class MultiModalRenderProvider implements RenderProvider {
       const tmpOutput = join(tmpdir(), `fantom-mm-${jobId}-output.mp4`)
       tempFiles.push(tmpOutput)
 
+      const drawTextOk = await isDrawTextAvailable()
+      if (!drawTextOk) log('drawtext filter unavailable in this ffmpeg build — captions skipped')
+
       log('Composing final video...')
       const durationSeconds = await buildComposeCommand({
         clipPaths,
         voiceAudio: tmpAudio,
         voiceDuration,
         musicAudio: tmpMusic,
-        captionText: captionText ?? null,
+        captionText: drawTextOk ? (captionText ?? null) : null,
         fontPath,
         logoPath,
         coBrandLogoPath,
