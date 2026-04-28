@@ -56,3 +56,6 @@ env/
 
 # Misc
 *.tsbuildinfo
+
+# Fantom local dev token (written by scripts/auth-login.ts)
+.fantom-token
