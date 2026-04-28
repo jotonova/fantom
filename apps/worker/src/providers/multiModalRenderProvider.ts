@@ -67,6 +67,7 @@ async function findFontPath(): Promise<string | null> {
 
 function escapeFfmpegText(text: string): string {
   return text
+    .replace(/[^\x00-\x7F]/g, '')  // strip non-ASCII (emoji etc — drawtext font won't have glyphs)
     .replace(/\\/g, '\\\\')
     .replace(/'/g, '\u2019')
     .replace(/:/g, '\\:')
@@ -268,8 +269,10 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
     if (coBrandLogoPath) cmd = cmd.input(coBrandLogoPath).inputOptions(['-loop', '1'])
     if (complianceLogoPath) cmd = cmd.input(complianceLogoPath).inputOptions(['-loop', '1'])
 
+    // complexFilter() passes the graph as a single spawn argument, avoiding
+    // fluent-ffmpeg's whitespace-splitting of outputOptions array elements.
+    cmd = cmd.complexFilter(filterParts.join(';'))
     cmd = cmd.outputOptions([
-      '-filter_complex', filterParts.join(';'),
       '-map', `[${currentVideo}]`,
       '-map', '[audio_final]',
       '-c:v', 'libx264',
