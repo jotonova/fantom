@@ -123,6 +123,8 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       voiceCloneId?: string
       musicVibe?: string
       targetDurationSeconds?: number
+      /** Per-asset motion hints: { [assetId]: "zoom in slowly" } */
+      motionHints?: Record<string, string>
     }
   }>('/shorts', { preHandler: requireAuth }, async (request, reply) => {
     const {
@@ -136,6 +138,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       voiceCloneId,
       musicVibe,
       targetDurationSeconds = 60,
+      motionHints,
     } = request.body ?? {}
 
     if (!Array.isArray(photoAssetIds) || photoAssetIds.length === 0) {
@@ -174,6 +177,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
           voiceCloneId: typeof voiceCloneId === 'string' ? voiceCloneId : null,
           musicVibe: typeof musicVibe === 'string' ? musicVibe : null,
           targetDurationSeconds: typeof targetDurationSeconds === 'number' ? targetDurationSeconds : 60,
+          motionHints: motionHints ?? null,
           status: 'draft',
         })
         .returning()
@@ -271,6 +275,8 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       targetDurationSeconds?: number
       vibe?: string
       photoAssetIds?: string[]
+      /** Per-asset motion hints: { [assetId]: "zoom in slowly" } */
+      motionHints?: Record<string, string> | null
     }
   }>('/shorts/:id', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params
@@ -308,6 +314,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     if (Array.isArray(body.photoAssetIds) && body.photoAssetIds.length > 0) {
       patch.inputAssetIds = body.photoAssetIds
     }
+    if ('motionHints' in body) patch.motionHints = body.motionHints ?? null
 
     if (Object.keys(patch).length === 0) {
       return reply.code(400).send({ error: 'No valid fields to update' })
