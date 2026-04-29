@@ -451,9 +451,11 @@ export class MultiModalRenderProvider implements RenderProvider {
 
         const ext = getExt(asset.mimeType)
         const isImage = asset.kind === 'image'
-        const tmpSrc = join(tmpdir(), `fantom-mm-${jobId}-src-${index}.${ext}`)
+        // tmpSrc only needed for video assets (color grade + smart crop)
+        const tmpSrc = isImage ? null : join(tmpdir(), `fantom-mm-${jobId}-src-${index}.${ext}`)
         const tmpClip = join(tmpdir(), `fantom-mm-${jobId}-clip-${index}.mp4`)
-        tempFiles.push(tmpSrc, tmpClip)
+        if (tmpSrc) tempFiles.push(tmpSrc)
+        tempFiles.push(tmpClip)
 
         // Mark asset as processing
         await patchShortsJob(shortsJobId, tenantId, {
@@ -469,16 +471,14 @@ export class MultiModalRenderProvider implements RenderProvider {
             throw new BudgetExceededError(budget.spentUsd, budget.capUsd)
           }
 
-          // Download image from R2
-          await getObjectToFile(asset.r2Key, tmpSrc)
-
-          // Convert to base64 for Runway (Runway accepts data URLs)
-          const dataUrl = await toBase64DataUrl(tmpSrc, asset.mimeType)
+          // Use the R2 public URL directly — base64 data URLs exceed Runway's 5MB
+          // limit for high-resolution source photos. Public URLs are always <2048 chars.
+          const promptImage = getPublicUrl(asset.r2Key)
           const hint = motionHints?.[assetId]
 
-          log(`[asset ${index + 1}] Submitting to Runway Gen-3 Turbo...`)
+          log(`[asset ${index + 1}] Submitting to Runway Gen-3 Turbo (url: ${promptImage.slice(-40)})`)
           const taskId = await generateMotionClip({
-            promptImage: dataUrl,
+            promptImage,
             ...(hint ? { promptText: hint } : {}),
           })
 
@@ -513,12 +513,13 @@ export class MultiModalRenderProvider implements RenderProvider {
         } else {
           // Video path: download → color grade → smart crop
           log(`[asset ${index + 1}] Processing video asset...`)
-          await getObjectToFile(asset.r2Key, tmpSrc)
+          const videoSrc = tmpSrc! // only null for image assets; guaranteed non-null here
+          await getObjectToFile(asset.r2Key, videoSrc)
 
           const tmpGraded = join(tmpdir(), `fantom-mm-${jobId}-graded-${index}.mp4`)
           tempFiles.push(tmpGraded)
 
-          await applyColorGrade(tmpSrc, tmpGraded, 'cinematic')
+          await applyColorGrade(videoSrc, tmpGraded, 'cinematic')
           await smartCrop(tmpGraded, tmpClip, OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
           // Optionally extract transcript for quality logging (non-blocking)
