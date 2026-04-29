@@ -17,7 +17,7 @@ import { FfmpegProvider } from './providers/ffmpegProvider.js'
 import { RemotionProvider } from './providers/remotionProvider.js'
 import { CapCutProvider } from './providers/capcutProvider.js'
 import { ShortVideoProvider } from './providers/shortVideoProvider.js'
-import { MultiModalRenderProvider } from './providers/multiModalRenderProvider.js'
+import { MultiModalRenderProvider, runFfmpegDiagnostics } from './providers/multiModalRenderProvider.js'
 import { WebhookDestination } from './destinations/webhookDestination.js'
 import { WebhookRetryableError } from './destinations/webhookDestination.js'
 import { YouTubeDestination } from './destinations/youtubeDestination.js'
@@ -60,6 +60,10 @@ try {
   console.error('fantom-worker: database connection failed', err)
   process.exit(1)
 }
+
+// ── ffmpeg capability diagnostics ─────────────────────────────────────────────
+
+await runFfmpegDiagnostics()
 
 // ── Render bus ────────────────────────────────────────────────────────────────
 
