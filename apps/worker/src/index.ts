@@ -251,6 +251,7 @@ async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
       await patchShortsJob(job.input['shortsJobId'], tenantId, {
         outputAssetId: videoAsset.id,
         status: 'rendered',
+        errorMessage: null, // clear any stale error from prior failed attempts
       }).catch((err) => {
         console.error(`[job:${jobId}] failed to update shorts_job:`, err)
       })
