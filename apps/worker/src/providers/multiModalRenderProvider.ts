@@ -434,13 +434,15 @@ export class MultiModalRenderProvider implements RenderProvider {
       // ── 4. Process input assets in parallel batches of 4 ─────────────────
       log(`Processing ${inputAssetIds.length} input assets...`)
 
-      // Initialize per-asset status
-      const initStatus: Record<string, { status: string; taskId?: string }> = {}
+      // Shared mutable tracker — each concurrent worker updates only its own key.
+      // Using a spread of a fixed initStatus object caused a race condition where
+      // concurrent workers would overwrite each other's status updates.
+      const assetStatus: Record<string, { status: string; taskId?: string }> = {}
       for (const id of inputAssetIds) {
-        initStatus[id] = { status: 'pending' }
+        assetStatus[id] = { status: 'pending' }
       }
       await patchShortsJob(shortsJobId, tenantId, {
-        assetRenderStatus: initStatus,
+        assetRenderStatus: { ...assetStatus },
       }).catch(console.error)
 
       const clipPaths: string[] = []
@@ -458,8 +460,9 @@ export class MultiModalRenderProvider implements RenderProvider {
         tempFiles.push(tmpClip)
 
         // Mark asset as processing
+        assetStatus[assetId] = { status: 'processing' }
         await patchShortsJob(shortsJobId, tenantId, {
-          assetRenderStatus: { ...initStatus, [assetId]: { status: 'processing' } },
+          assetRenderStatus: { ...assetStatus },
         }).catch(console.error)
 
         await checkCancelled()
@@ -485,8 +488,9 @@ export class MultiModalRenderProvider implements RenderProvider {
           })
 
           // Update status with task ID
+          assetStatus[assetId] = { status: 'processing', taskId }
           await patchShortsJob(shortsJobId, tenantId, {
-            assetRenderStatus: { ...initStatus, [assetId]: { status: 'processing', taskId } },
+            assetRenderStatus: { ...assetStatus },
           }).catch(console.error)
 
           log(`[asset ${index + 1}] Runway task ${taskId} — waiting for completion...`)
@@ -530,8 +534,9 @@ export class MultiModalRenderProvider implements RenderProvider {
           log(`[asset ${index + 1}] Video processed`)
         }
 
+        assetStatus[assetId] = { status: 'done' }
         await patchShortsJob(shortsJobId, tenantId, {
-          assetRenderStatus: { ...initStatus, [assetId]: { status: 'done' } },
+          assetRenderStatus: { ...assetStatus },
         }).catch(console.error)
 
         clipPaths[index] = tmpClip
