@@ -26,7 +26,7 @@ const NAV_ITEMS = [
 ]
 
 const STUDIO_NAV_ITEMS = [
-  { label: 'Shorts', href: '/studio/shorts' },
+  { label: 'Studio', href: '/studio' },
 ]
 
 const ADMIN_NAV_ITEMS = [
