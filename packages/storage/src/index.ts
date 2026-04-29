@@ -180,6 +180,23 @@ export async function getObjectBuffer(r2Key: string): Promise<Buffer> {
   })
 }
 
+/** R2 key used as a public-URL health sentinel. Written at worker startup. */
+export const R2_HEALTH_SENTINEL_KEY = '_healthcheck/ping.txt'
+
+/**
+ * Writes a tiny sentinel object to R2 and returns its public URL.
+ * Called once at worker startup so the sentinel always exists and reflects
+ * the current deploy. Returns the public URL to poll in the daily health check.
+ */
+export async function writePublicHealthSentinel(): Promise<string> {
+  await putObject(
+    R2_HEALTH_SENTINEL_KEY,
+    Buffer.from(`fantom-r2-health-ok-${new Date().toISOString()}`),
+    'text/plain',
+  )
+  return getPublicUrl(R2_HEALTH_SENTINEL_KEY)
+}
+
 /**
  * Minimal health check: lists up to 1 object to confirm R2 credentials + connectivity.
  * Returns { healthy: true } on success, { healthy: false, error: string } on failure.

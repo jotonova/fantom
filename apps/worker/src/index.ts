@@ -17,14 +17,14 @@ import { FfmpegProvider } from './providers/ffmpegProvider.js'
 import { RemotionProvider } from './providers/remotionProvider.js'
 import { CapCutProvider } from './providers/capcutProvider.js'
 import { ShortVideoProvider } from './providers/shortVideoProvider.js'
-import { MultiModalRenderProvider } from './providers/multiModalRenderProvider.js'
+import { MultiModalRenderProvider, runFfmpegDiagnostics } from './providers/multiModalRenderProvider.js'
 import { WebhookDestination } from './destinations/webhookDestination.js'
 import { WebhookRetryableError } from './destinations/webhookDestination.js'
 import { YouTubeDestination } from './destinations/youtubeDestination.js'
 import { FacebookDestination } from './destinations/facebookDestination.js'
 import { InstagramDestination } from './destinations/instagramDestination.js'
 import { MlsDestination } from './destinations/mlsDestination.js'
-import { getPublicUrl } from '@fantom/storage'
+import { getPublicUrl, writePublicHealthSentinel } from '@fantom/storage'
 import { dispatchVoiceClone } from './handlers/voiceCloneTrain.js'
 import {
   getJobRow,
@@ -60,6 +60,49 @@ try {
   console.error('fantom-worker: database connection failed', err)
   process.exit(1)
 }
+
+// ── ffmpeg capability diagnostics ─────────────────────────────────────────────
+
+await runFfmpegDiagnostics()
+
+// ── R2 public URL health check (daily) ────────────────────────────────────────
+
+let _r2HealthUrl: string | null = null
+
+async function runR2HealthCheck(): Promise<void> {
+  try {
+    if (!_r2HealthUrl) {
+      _r2HealthUrl = await writePublicHealthSentinel()
+      console.log(`[r2-health] sentinel written → ${_r2HealthUrl}`)
+    }
+    const res = await fetch(_r2HealthUrl, { method: 'HEAD', signal: AbortSignal.timeout(10_000) })
+    if (res.ok) {
+      console.log(`[r2-health] OK (${res.status})`)
+    } else {
+      console.error(`[r2-health] FAIL (${res.status}) — alerting`)
+      // logEvent auto-calls maybeAlert for critical severity
+      logEvent({
+        kind: 'r2_public_url_down',
+        severity: 'critical',
+        errorMessage: `R2 public URL returned HTTP ${res.status}`,
+        metadata: { url: _r2HealthUrl, status: res.status },
+      })
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[r2-health] FAIL (network error) — ${msg}`)
+    logEvent({
+      kind: 'r2_public_url_down',
+      severity: 'critical',
+      errorMessage: msg,
+      metadata: { url: _r2HealthUrl },
+    })
+  }
+}
+
+// Run immediately at startup, then every 24 hours.
+void runR2HealthCheck()
+setInterval(() => void runR2HealthCheck(), 24 * 60 * 60 * 1_000)
 
 // ── Render bus ────────────────────────────────────────────────────────────────
 
@@ -251,6 +294,7 @@ async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
       await patchShortsJob(job.input['shortsJobId'], tenantId, {
         outputAssetId: videoAsset.id,
         status: 'rendered',
+        errorMessage: null, // clear any stale error from prior failed attempts
       }).catch((err) => {
         console.error(`[job:${jobId}] failed to update shorts_job:`, err)
       })

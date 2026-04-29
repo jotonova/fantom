@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildKey, putObjectFromFile, getObjectToFile } from '@fantom/storage'
 import { synthesize } from '@fantom/voice'
@@ -43,8 +44,12 @@ function probeAudioDuration(filePath: string): Promise<number> {
   })
 }
 
+const _workerRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const BUNDLED_FONT = join(_workerRoot, 'fonts', 'DejaVuSans-Bold.ttf')
+
 async function findFontPath(): Promise<string | null> {
   const candidates = [
+    BUNDLED_FONT, // always checked first — bundled at deploy time
     '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
     '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
     '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',

@@ -304,6 +304,17 @@ export interface RunwayBudgetStatus {
  * Checks how much of the tenant's Runway monthly budget has been spent.
  * Cap is read from RUNWAY_MONTHLY_CAP_USD env var (default $100).
  * Both GUCs must be set so the INSERT path (which returns) works correctly.
+ *
+ * Budget enforcement model:
+ *   - Called BEFORE each Runway API call (per asset, inside batchProcess).
+ *   - A single 5-second Gen-3 Turbo clip costs ~$0.50. If spentUsd is $99.51
+ *     and the next clip would push the total to $100.01, the check fires and
+ *     BudgetExceededError is thrown before the API call is made.
+ *   - This is a "hard stop before dispatch" approach — no over-run is possible
+ *     unless Runway changes its per-clip cost above RUNWAY_MONTHLY_CAP_USD.
+ *   - The caller in multiModalRenderProvider wraps individual assets; remaining
+ *     assets in the same batch will also be blocked once the cap is hit because
+ *     each asset calls this function independently.
  */
 export async function checkRunwayBudget(tenantId: string): Promise<RunwayBudgetStatus> {
   const capUsd = Number(process.env['RUNWAY_MONTHLY_CAP_USD'] ?? '100')
