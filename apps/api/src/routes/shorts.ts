@@ -120,11 +120,14 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       captionText?: string
       captionSource?: string
       brandKitId?: string
+      coBrandKitId?: string
+      complianceKitId?: string
       voiceCloneId?: string
       musicVibe?: string
       targetDurationSeconds?: number
       /** Per-asset motion hints: { [assetId]: "zoom in slowly" } */
       motionHints?: Record<string, string>
+      sfxPrompt?: string
     }
   }>('/shorts', { preHandler: requireAuth }, async (request, reply) => {
     const {
@@ -135,10 +138,13 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       captionText,
       captionSource = 'ai_generated',
       brandKitId,
+      coBrandKitId,
+      complianceKitId,
       voiceCloneId,
       musicVibe,
       targetDurationSeconds = 60,
       motionHints,
+      sfxPrompt,
     } = request.body ?? {}
 
     if (!Array.isArray(photoAssetIds) || photoAssetIds.length === 0) {
@@ -174,10 +180,13 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
           captionText: typeof captionText === 'string' ? captionText : null,
           captionSource: (captionSource as ShortsJob['captionSource']) ?? 'ai_generated',
           brandKitId: typeof brandKitId === 'string' ? brandKitId : null,
+          coBrandKitId: typeof coBrandKitId === 'string' ? coBrandKitId : null,
+          complianceKitId: typeof complianceKitId === 'string' ? complianceKitId : null,
           voiceCloneId: typeof voiceCloneId === 'string' ? voiceCloneId : null,
           musicVibe: typeof musicVibe === 'string' ? musicVibe : null,
           targetDurationSeconds: typeof targetDurationSeconds === 'number' ? targetDurationSeconds : 60,
           motionHints: motionHints ?? null,
+          sfxPrompt: typeof sfxPrompt === 'string' ? sfxPrompt : null,
           status: 'draft',
         })
         .returning()
@@ -271,12 +280,15 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       captionSource?: string
       voiceCloneId?: string | null
       brandKitId?: string | null
+      coBrandKitId?: string | null
+      complianceKitId?: string | null
       musicVibe?: string | null
       targetDurationSeconds?: number
       vibe?: string
       photoAssetIds?: string[]
       /** Per-asset motion hints: { [assetId]: "zoom in slowly" } */
       motionHints?: Record<string, string> | null
+      sfxPrompt?: string | null
     }
   }>('/shorts/:id', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params
@@ -306,6 +318,8 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     if (typeof body.captionSource === 'string') patch.captionSource = body.captionSource as ShortsJob['captionSource']
     if ('voiceCloneId' in body) patch.voiceCloneId = body.voiceCloneId ?? null
     if ('brandKitId' in body) patch.brandKitId = body.brandKitId ?? null
+    if ('coBrandKitId' in body) patch.coBrandKitId = body.coBrandKitId ?? null
+    if ('complianceKitId' in body) patch.complianceKitId = body.complianceKitId ?? null
     if ('musicVibe' in body) patch.musicVibe = body.musicVibe ?? null
     if (typeof body.targetDurationSeconds === 'number') patch.targetDurationSeconds = body.targetDurationSeconds
     if (typeof body.vibe === 'string' && VALID_VIBES.has(body.vibe)) {
@@ -315,6 +329,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       patch.inputAssetIds = body.photoAssetIds
     }
     if ('motionHints' in body) patch.motionHints = body.motionHints ?? null
+    if ('sfxPrompt' in body) patch.sfxPrompt = body.sfxPrompt ?? null
 
     if (Object.keys(patch).length === 0) {
       return reply.code(400).send({ error: 'No valid fields to update' })

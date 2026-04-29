@@ -309,8 +309,6 @@ export default function ShortsVPFPage() {
 
     try {
       // Step 1: Create draft
-      // NOTE: coBrandKitId, complianceKitId, sfxPrompt are collected in the UI
-      // but the POST /shorts validator doesn't yet accept them. Wired in Commit D.
       const draft = await apiFetch<{ id: string }>('/shorts', {
         method: 'POST',
         body: JSON.stringify({
@@ -321,9 +319,12 @@ export default function ShortsVPFPage() {
           captionText: captionMode !== 'none' ? captionText.trim() || undefined : undefined,
           captionSource: captionMode === 'ai' ? 'ai_generated' : captionMode === 'custom' ? 'custom' : undefined,
           brandKitId,
+          coBrandKitId: coBrandKitId.trim() || undefined,
+          complianceKitId: complianceKitId.trim() || undefined,
           voiceCloneId: generateVoiceover ? voiceCloneId : undefined,
           musicVibe: musicVibe.trim() || undefined,
           targetDurationSeconds: targetDuration,
+          sfxPrompt: sfxPrompt.trim() || undefined,
         }),
       })
 
