@@ -2,18 +2,26 @@
 /**
  * Authenticate against the Fantom API and persist the token.
  *
- * Usage:
- *   FANTOM_API_BASE=https://fantom-api.onrender.com \
- *   FANTOM_USER_EMAIL=you@example.com \
- *   FANTOM_USER_PASSWORD=secret \
- *   tsx scripts/auth-login.ts
+ * Env vars are loaded automatically from .env.local in the repo root (gitignored).
+ * You can still override any var inline: FANTOM_API_BASE=... tsx scripts/auth-login.ts
  *
  * On success: writes .fantom-token to the repo root and prints JSON to stdout.
  * On failure: prints an error message to stderr and exits 1.
  */
 
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+// Load .env.local from repo root if present — simple key=value parser, no dep needed.
+const envLocalPath = join(process.cwd(), '.env.local')
+if (existsSync(envLocalPath)) {
+  for (const line of readFileSync(envLocalPath, 'utf8').split('\n')) {
+    const match = line.match(/^([A-Z_][A-Z0-9_]*)=["']?(.+?)["']?\s*$/)
+    if (match && !process.env[match[1]]) {
+      process.env[match[1]] = match[2]
+    }
+  }
+}
 
 export interface TokenCache {
   accessToken: string

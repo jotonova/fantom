@@ -11,9 +11,19 @@
  *   await api.patch('/shorts/123', { script: '...' })
  */
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { login, TOKEN_FILE } from './auth-login.js'
 import type { TokenCache } from './auth-login.js'
+
+// Load .env.local from repo root if present (same logic as auth-login.ts)
+const _envLocal = join(process.cwd(), '.env.local')
+if (existsSync(_envLocal)) {
+  for (const line of readFileSync(_envLocal, 'utf8').split('\n')) {
+    const m = line.match(/^([A-Z_][A-Z0-9_]*)=["']?(.+?)["']?\s*$/)
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2]
+  }
+}
 
 // ── Token management ──────────────────────────────────────────────────────────
 
