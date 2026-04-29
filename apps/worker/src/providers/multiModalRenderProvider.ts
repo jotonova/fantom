@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { buildKey, putObjectFromFile, getObjectToFile, getPublicUrl } from '@fantom/storage'
+import { buildKey, putObjectFromFile, getObjectToFile, generateDownloadUrl } from '@fantom/storage'
 import { synthesize } from '@fantom/voice'
 import { fetchMusic } from '@fantom/music'
 import type { MusicVibe } from '@fantom/music'
@@ -471,12 +471,14 @@ export class MultiModalRenderProvider implements RenderProvider {
             throw new BudgetExceededError(budget.spentUsd, budget.capUsd)
           }
 
-          // Use the R2 public URL directly — base64 data URLs exceed Runway's 5MB
-          // limit for high-resolution source photos. Public URLs are always <2048 chars.
-          const promptImage = getPublicUrl(asset.r2Key)
+          // Generate a 30-min presigned GET URL for the R2 object.
+          // base64 data URLs exceed Runway's 5MB limit for high-res photos;
+          // the R2 public domain is not reliably accessible externally.
+          const promptImage = await generateDownloadUrl(asset.r2Key)
           const hint = motionHints?.[assetId]
 
-          log(`[asset ${index + 1}] Submitting to Runway Gen-3 Turbo (url: ${promptImage.slice(-40)})`)
+          log(`[asset ${index + 1}] Submitting to Runway Gen-3 Turbo (presigned url)`)
+
           const taskId = await generateMotionClip({
             promptImage,
             ...(hint ? { promptText: hint } : {}),

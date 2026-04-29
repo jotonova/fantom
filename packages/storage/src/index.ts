@@ -69,6 +69,19 @@ export function buildKey(tenantSlug: string, kind: string, filename: string): st
   return `${tenantSlug}/${kind}/${yyyy}/${mm}/${id}-${safe}`
 }
 
+/**
+ * Generates a presigned GET URL for a private R2 object.
+ * The URL is accessible to any bearer (e.g. Runway) for `expiresIn` seconds.
+ * Defaults to 30 minutes — enough for a Runway processing queue with headroom.
+ */
+export async function generateDownloadUrl(
+  r2Key: string,
+  expiresIn = 1800,
+): Promise<string> {
+  const command = new GetObjectCommand({ Bucket: bucketName(), Key: r2Key })
+  return getSignedUrl(r2, command, { expiresIn })
+}
+
 export async function generateUploadUrl(
   tenantSlug: string,
   kind: string,
