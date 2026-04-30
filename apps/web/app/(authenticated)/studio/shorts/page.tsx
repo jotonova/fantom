@@ -256,9 +256,8 @@ export default function ShortsVPFPage() {
 
   // ── Script generation ─────────────────────────────────────────────────────────
   async function handleGenerateScript() {
-    if (selectedIds.length === 0) { setError('Select at least one asset first'); return }
     const kit = brandKits.find((k) => k.id === brandKitId) ?? brandKits[0]
-    if (!kit) { setError('Select a primary brand kit first'); return }
+    if (!kit) return // safety; button is disabled when brandKits.length === 0
     setGeneratingScript(true)
     setError(null)
     try {
@@ -289,7 +288,7 @@ export default function ShortsVPFPage() {
   // ── Caption generation (captions-only, doesn't overwrite script) ─────────────
   async function handleGenerateCaptions() {
     const kit = brandKits.find((k) => k.id === brandKitId) ?? brandKits[0]
-    if (!kit) { setError('Select a primary brand kit first'); return }
+    if (!kit) return // safety; button is disabled when brandKits.length === 0
     setGeneratingScript(true)
     setError(null)
     try {
@@ -379,6 +378,14 @@ export default function ShortsVPFPage() {
 
   const wc = wordCount(script)
   const estSecs = estimatedDuration(script)
+
+  // Inline validation reason for Generate Script / Generate Captions buttons.
+  // Shown as helper text directly below the button so feedback is visible at the
+  // point of interaction rather than at the top-of-page error banner.
+  const scriptBlockReason =
+    selectedIds.length === 0 ? 'Select photos in Step 1 first.' :
+    brandKits.length === 0  ? 'Select a primary brand kit in Step 3 first.' :
+    null
 
   // ── Result view ───────────────────────────────────────────────────────────────
   if (job) {
@@ -746,20 +753,25 @@ export default function ShortsVPFPage() {
           </div>
 
           {scriptMode === 'ai' && (
-            <Button
-              variant="secondary"
-              onClick={handleGenerateScript}
-              disabled={generatingScript}
-              className="w-full"
-            >
-              {generatingScript ? (
-                <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
-              ) : script ? (
-                'Regenerate Script'
-              ) : (
-                'Generate Script'
+            <div className="space-y-1.5">
+              <Button
+                variant="secondary"
+                onClick={handleGenerateScript}
+                disabled={generatingScript || !!scriptBlockReason}
+                className="w-full"
+              >
+                {generatingScript ? (
+                  <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
+                ) : script ? (
+                  'Regenerate Script'
+                ) : (
+                  'Generate Script'
+                )}
+              </Button>
+              {scriptBlockReason && !generatingScript && (
+                <p className="text-xs text-amber-400/80">{scriptBlockReason}</p>
               )}
-            </Button>
+            </div>
           )}
 
           <div className="space-y-1">
@@ -821,18 +833,23 @@ export default function ShortsVPFPage() {
           )}
 
           {captionMode === 'ai' && script && suggestedCaptions.length === 0 && (
-            <Button
-              variant="secondary"
-              onClick={handleGenerateCaptions}
-              disabled={generatingScript}
-              className="w-full"
-            >
-              {generatingScript ? (
-                <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
-              ) : (
-                'Generate Captions'
+            <div className="space-y-1.5">
+              <Button
+                variant="secondary"
+                onClick={handleGenerateCaptions}
+                disabled={generatingScript || !!scriptBlockReason}
+                className="w-full"
+              >
+                {generatingScript ? (
+                  <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
+                ) : (
+                  'Generate Captions'
+                )}
+              </Button>
+              {scriptBlockReason && !generatingScript && (
+                <p className="text-xs text-amber-400/80">{scriptBlockReason}</p>
               )}
-            </Button>
+            </div>
           )}
 
           {captionMode === 'ai' && suggestedCaptions.length > 0 && (
@@ -850,18 +867,23 @@ export default function ShortsVPFPage() {
                   {c}
                 </button>
               ))}
-              <Button
-                variant="secondary"
-                onClick={handleGenerateCaptions}
-                disabled={generatingScript}
-                className="w-full mt-1"
-              >
-                {generatingScript ? (
-                  <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
-                ) : (
-                  'Regenerate Captions'
+              <div className="space-y-1.5 mt-1">
+                <Button
+                  variant="secondary"
+                  onClick={handleGenerateCaptions}
+                  disabled={generatingScript || !!scriptBlockReason}
+                  className="w-full"
+                >
+                  {generatingScript ? (
+                    <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
+                  ) : (
+                    'Regenerate Captions'
+                  )}
+                </Button>
+                {scriptBlockReason && !generatingScript && (
+                  <p className="text-xs text-amber-400/80">{scriptBlockReason}</p>
                 )}
-              </Button>
+              </div>
             </div>
           )}
 
