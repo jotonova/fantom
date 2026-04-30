@@ -1,7 +1,6 @@
 import { promises as fs } from 'node:fs'
 import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
-import { join, dirname } from 'node:path'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildKey, putObjectFromFile, getObjectToFile } from '@fantom/storage'
 import { synthesize } from '@fantom/voice'
@@ -17,6 +16,7 @@ import {
   getVoiceCloneRow,
   getAssetRow,
 } from '../lib/db.js'
+import { generateSrtFile } from '../lib/srt.js'
 
 // ffmpeg-static is CJS; use createRequire so NodeNext module resolution finds it
 const _require = createRequire(import.meta.url)
@@ -44,36 +44,6 @@ function probeAudioDuration(filePath: string): Promise<number> {
   })
 }
 
-const _workerRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const BUNDLED_FONT = join(_workerRoot, 'fonts', 'DejaVuSans-Bold.ttf')
-
-async function findFontPath(): Promise<string | null> {
-  const candidates = [
-    BUNDLED_FONT, // always checked first — bundled at deploy time
-    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-    '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
-    '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
-    '/System/Library/Fonts/Helvetica.ttc', // macOS (dev only)
-  ]
-  for (const p of candidates) {
-    try {
-      await fs.access(p)
-      return p
-    } catch {
-      // try next
-    }
-  }
-  return null
-}
-
-function escapeFfmpegText(text: string): string {
-  return text
-    .replace(/\\/g, '\\\\') // backslash first
-    .replace(/'/g, '\u2019') // replace apostrophe with right single quotation mark
-    .replace(/:/g, '\\:') // colon is a field separator in ffmpeg filters
-    .replace(/[\n\r]+/g, ' ') // newlines → spaces
-    .trim()
-}
 
 const IMAGE_EXT_MAP: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -103,8 +73,8 @@ interface FilterComplexParams {
   musicInputIdx: number | null
   logoInputIdx: number | null
   voiceDuration: number
-  captionText: string | null
-  fontPath: string | null
+  /** Path to a pre-generated .srt file, or null if captions are disabled. */
+  srtPath: string | null
 }
 
 interface FilterComplexResult {
@@ -120,8 +90,7 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
     musicInputIdx,
     logoInputIdx,
     voiceDuration: D,
-    captionText,
-    fontPath,
+    srtPath,
   } = params
 
   const c = CROSSFADE_DURATION
@@ -156,17 +125,14 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
     currentLabel = 'video_raw'
   }
 
-  // ── Caption ───────────────────────────────────────────────────────────────
-  if (captionText) {
-    const escaped = escapeFfmpegText(captionText)
-    const fontfileParam = fontPath ? `fontfile='${fontPath}':` : ''
-    const nextLabel = 'captioned'
+  // ── Caption (SRT-based via subtitles filter — no libfreetype required) ───────
+  if (srtPath) {
     parts.push(
-      `[${currentLabel}]drawtext=${fontfileParam}text='${escaped}':` +
-        `fontsize=52:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12:` +
-        `x=(w-text_w)/2:y=h*0.85[${nextLabel}]`,
+      `[${currentLabel}]subtitles='${srtPath}':` +
+        `force_style='Fontsize=18,PrimaryColour=&Hffffff,OutlineColour=&H80000000,` +
+        `BorderStyle=4,Outline=4,MarginV=40,Alignment=2'[captioned]`,
     )
-    currentLabel = nextLabel
+    currentLabel = 'captioned'
   }
 
   // ── Logo watermark ────────────────────────────────────────────────────────
@@ -430,9 +396,12 @@ export class ShortVideoProvider implements RenderProvider {
       onProgress(40)
       await checkCancelled()
 
-      // ── 8. Find font path ─────────────────────────────────────────────────
-      const fontPath = await findFontPath()
-      if (!fontPath) log('No font file found — using ffmpeg default font')
+      // ── 8. Generate SRT captions ──────────────────────────────────────────
+      const srtPath = await generateSrtFile(captionText, jobId, voiceDuration)
+      if (srtPath) {
+        tempFiles.push(srtPath)
+        log('SRT captions written')
+      }
 
       // ── 9. Build filter complex ───────────────────────────────────────────
       const N = photoPaths.length
@@ -451,8 +420,7 @@ export class ShortVideoProvider implements RenderProvider {
         musicInputIdx,
         logoInputIdx,
         voiceDuration,
-        captionText: captionText ?? null,
-        fontPath,
+        srtPath,
       })
 
       // ── 10. Run ffmpeg ────────────────────────────────────────────────────

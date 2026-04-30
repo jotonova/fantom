@@ -256,9 +256,8 @@ export default function ShortsVPFPage() {
 
   // ── Script generation ─────────────────────────────────────────────────────────
   async function handleGenerateScript() {
-    if (selectedIds.length === 0) { setError('Select at least one asset first'); return }
     const kit = brandKits.find((k) => k.id === brandKitId) ?? brandKits[0]
-    if (!kit) { setError('Select a primary brand kit first'); return }
+    if (!kit) return // safety; button is disabled when brandKits.length === 0
     setGeneratingScript(true)
     setError(null)
     try {
@@ -281,6 +280,35 @@ export default function ShortsVPFPage() {
       }
     } catch (err) {
       setError(`Script generation failed: ${err instanceof Error ? err.message : 'Try again'}`)
+    } finally {
+      setGeneratingScript(false)
+    }
+  }
+
+  // ── Caption generation (captions-only, doesn't overwrite script) ─────────────
+  async function handleGenerateCaptions() {
+    const kit = brandKits.find((k) => k.id === brandKitId) ?? brandKits[0]
+    if (!kit) return // safety; button is disabled when brandKits.length === 0
+    setGeneratingScript(true)
+    setError(null)
+    try {
+      const result = await apiFetch<{ script: string; suggestedCaptions: string[] }>(
+        '/shorts/generate-script',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            vibe,
+            brandKitName: kit.name,
+            photoCount: selectedIds.length || 1,
+            targetDurationSeconds: targetDuration,
+          }),
+        },
+      )
+      const captions = result.suggestedCaptions ?? []
+      setSuggestedCaptions(captions)
+      if (captions[0]) setCaptionText(captions[0])
+    } catch (err) {
+      setError(`Caption generation failed: ${err instanceof Error ? err.message : 'Try again'}`)
     } finally {
       setGeneratingScript(false)
     }
@@ -350,6 +378,14 @@ export default function ShortsVPFPage() {
 
   const wc = wordCount(script)
   const estSecs = estimatedDuration(script)
+
+  // Inline validation reason for Generate Script / Generate Captions buttons.
+  // Shown as helper text directly below the button so feedback is visible at the
+  // point of interaction rather than at the top-of-page error banner.
+  const scriptBlockReason =
+    selectedIds.length === 0 ? 'Select photos in Step 1 first.' :
+    brandKits.length === 0  ? 'Select a primary brand kit in Step 3 first.' :
+    null
 
   // ── Result view ───────────────────────────────────────────────────────────────
   if (job) {
@@ -551,20 +587,32 @@ export default function ShortsVPFPage() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-2 sm:grid-cols-3">
-            {VIBE_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setVibe(opt.value)}
-                className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                  vibe === opt.value
-                    ? 'border-fantom-blue bg-fantom-blue/10'
-                    : 'border-fantom-steel-border hover:border-fantom-blue/50'
-                }`}
-              >
-                <p className="text-sm font-medium text-fantom-text">{opt.label}</p>
-                <p className="mt-0.5 text-xs text-fantom-text-muted">{opt.description}</p>
-              </button>
-            ))}
+            {VIBE_OPTIONS.map((opt) => {
+              const active = vibe === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => setVibe(opt.value)}
+                  className={`relative rounded-lg border-2 px-3 py-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fantom-blue ${
+                    active
+                      ? 'border-fantom-blue bg-fantom-blue/15 ring-1 ring-fantom-blue/30'
+                      : 'border-fantom-steel-border hover:border-fantom-blue/50 hover:bg-fantom-steel'
+                  }`}
+                >
+                  {active && (
+                    <span className="absolute right-2 top-2 flex h-4 w-4 items-center justify-center rounded-full bg-fantom-blue">
+                      <svg className="h-2.5 w-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                  )}
+                  <p className={`text-sm font-semibold ${active ? 'text-fantom-blue' : 'text-fantom-text'}`}>
+                    {opt.label}
+                  </p>
+                  <p className="mt-0.5 text-xs text-fantom-text-muted">{opt.description}</p>
+                </button>
+              )
+            })}
           </div>
         </CardContent>
       </Card>
@@ -705,26 +753,25 @@ export default function ShortsVPFPage() {
           </div>
 
           {scriptMode === 'ai' && (
-            <Button
-              variant="secondary"
-              onClick={handleGenerateScript}
-              disabled={generatingScript || selectedIds.length === 0 || !brandKitId}
-              className="w-full"
-            >
-              {generatingScript ? (
-                <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
-              ) : script ? (
-                'Regenerate Script'
-              ) : (
-                'Generate Script with AI'
+            <div className="space-y-1.5">
+              <Button
+                variant="secondary"
+                onClick={handleGenerateScript}
+                disabled={generatingScript || !!scriptBlockReason}
+                className="w-full"
+              >
+                {generatingScript ? (
+                  <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
+                ) : script ? (
+                  'Regenerate Script'
+                ) : (
+                  'Generate Script'
+                )}
+              </Button>
+              {scriptBlockReason && !generatingScript && (
+                <p className="text-xs text-amber-400/80">{scriptBlockReason}</p>
               )}
-            </Button>
-          )}
-
-          {(scriptMode === 'ai' && !script && !generatingScript) && (
-            <p className="text-center text-xs text-fantom-text-muted">
-              {selectedIds.length === 0 ? 'Select assets first' : !brandKitId ? 'Select a brand kit first' : 'Click to generate'}
-            </p>
+            </div>
           )}
 
           <div className="space-y-1">
@@ -752,7 +799,19 @@ export default function ShortsVPFPage() {
         <CardContent className="space-y-3">
           {/* Mode toggle */}
           <div className="flex gap-1 rounded-lg border border-fantom-steel-border bg-fantom-steel p-1">
-            {(['ai', 'custom', 'none'] as const).map((mode) => (
+            <button
+              onClick={() => setCaptionMode('ai')}
+              className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                captionMode === 'ai'
+                  ? 'bg-fantom-steel-lighter text-fantom-text shadow-sm'
+                  : !script
+                  ? 'cursor-not-allowed text-fantom-text-muted/40'
+                  : 'text-fantom-text-muted hover:text-fantom-text'
+              }`}
+            >
+              AI
+            </button>
+            {(['custom', 'none'] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setCaptionMode(mode)}
@@ -762,10 +821,36 @@ export default function ShortsVPFPage() {
                     : 'text-fantom-text-muted hover:text-fantom-text'
                 }`}
               >
-                {mode === 'ai' ? 'AI' : mode === 'custom' ? 'Custom' : 'None'}
+                {mode === 'custom' ? 'Custom' : 'None'}
               </button>
             ))}
           </div>
+
+          {captionMode === 'ai' && !script && (
+            <p className="text-xs text-fantom-text-muted">
+              Captions need a script first. Pick <span className="text-fantom-text">AI Generated</span> above in Step 5 and click <span className="text-fantom-text">Generate Script</span>.
+            </p>
+          )}
+
+          {captionMode === 'ai' && script && suggestedCaptions.length === 0 && (
+            <div className="space-y-1.5">
+              <Button
+                variant="secondary"
+                onClick={handleGenerateCaptions}
+                disabled={generatingScript || !!scriptBlockReason}
+                className="w-full"
+              >
+                {generatingScript ? (
+                  <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
+                ) : (
+                  'Generate Captions'
+                )}
+              </Button>
+              {scriptBlockReason && !generatingScript && (
+                <p className="text-xs text-amber-400/80">{scriptBlockReason}</p>
+              )}
+            </div>
+          )}
 
           {captionMode === 'ai' && suggestedCaptions.length > 0 && (
             <div className="space-y-1.5">
@@ -782,13 +867,24 @@ export default function ShortsVPFPage() {
                   {c}
                 </button>
               ))}
+              <div className="space-y-1.5 mt-1">
+                <Button
+                  variant="secondary"
+                  onClick={handleGenerateCaptions}
+                  disabled={generatingScript || !!scriptBlockReason}
+                  className="w-full"
+                >
+                  {generatingScript ? (
+                    <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
+                  ) : (
+                    'Regenerate Captions'
+                  )}
+                </Button>
+                {scriptBlockReason && !generatingScript && (
+                  <p className="text-xs text-amber-400/80">{scriptBlockReason}</p>
+                )}
+              </div>
             </div>
-          )}
-
-          {captionMode === 'ai' && suggestedCaptions.length === 0 && (
-            <p className="text-xs text-fantom-text-muted">
-              Generate a script above to get AI caption suggestions.
-            </p>
           )}
 
           {captionMode !== 'none' && (
