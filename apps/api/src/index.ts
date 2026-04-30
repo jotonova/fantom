@@ -41,9 +41,15 @@ if (process.env['NODE_ENV'] !== 'production') {
   allowedOrigins.add('http://localhost:3000')
 }
 
+// Vercel preview deploys for this project — narrowly scoped to fantom-* slugs
+// under Justin's Vercel team. Exact-match env-var origins take precedence.
+const vercelPreviewOrigin = /^https:\/\/fantom-[a-z0-9]+-justin-casanovas-projects\.vercel\.app$/
+
 await server.register(cors, {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) return callback(null, true)
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.has(origin)) return callback(null, true)
+    if (vercelPreviewOrigin.test(origin)) return callback(null, true)
     callback(new Error(`CORS: origin ${origin} not allowed`), false)
   },
 })

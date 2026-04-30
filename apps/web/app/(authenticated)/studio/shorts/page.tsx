@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { apiFetch } from '../../../../src/lib/api-client'
 import {
@@ -17,190 +17,168 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type AssetKind = 'image' | 'video' | 'audio' | 'document' | 'other'
+
+interface Asset {
+  id: string
+  kind: AssetKind
+  originalFilename: string
+  mimeType: string
+  sizeBytes: number
+  publicUrl: string
+  createdAt: string
+}
+
 interface BrandKit {
   id: string
   name: string
-  slug: string | null
   isDefault: boolean
-  logoUrl: string | null
-  primaryColor: string | null
 }
 
 interface VoiceClone {
   id: string
   name: string
   status: string
-  providerVoiceId: string | null
   isPersonal: boolean
-  ownerUserId: string | null
-}
-
-interface Asset {
-  id: string
-  originalFilename: string
-  publicUrl: string
-  kind: string
 }
 
 type ShortVibe = 'excited_reveal' | 'calm_walkthrough' | 'educational_breakdown'
-type MusicVibe = 'upbeat' | 'calm' | 'dramatic' | 'inspirational' | 'none'
 
-interface GenerateScriptResult {
-  script: string
-  suggestedCaptions: string[]
+interface ShortsJob {
+  id: string
+  status: 'draft' | 'rendering' | 'rendered' | 'failed' | 'approved' | 'scheduled' | 'posted'
+  errorMessage: string | null
+  outputVideoUrl: string | null
+  captionText: string | null
+  renderJobId: string | null
+  assetRenderStatus: Record<string, { status: string }> | null
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const MAX_PHOTOS = 30
+const MAX_ASSETS = 20
+const WORDS_PER_MIN = 130
 
 const VIBE_OPTIONS: { value: ShortVibe; label: string; description: string }[] = [
-  { value: 'excited_reveal', label: 'Excited Reveal', description: 'High-energy, punchy, hooks immediately' },
-  { value: 'calm_walkthrough', label: 'Calm Walkthrough', description: 'Measured, conversational, builds trust' },
-  { value: 'educational_breakdown', label: 'Educational', description: 'Clear, authoritative, teaches something' },
+  { value: 'excited_reveal',        label: 'Excited Reveal',   description: 'High-energy, punchy, hooks immediately' },
+  { value: 'calm_walkthrough',      label: 'Calm Walkthrough', description: 'Measured, conversational, builds trust' },
+  { value: 'educational_breakdown', label: 'Educational',      description: 'Clear, authoritative, teaches something' },
 ]
 
-const MUSIC_VIBE_OPTIONS: { value: MusicVibe; label: string }[] = [
-  { value: 'upbeat', label: 'Upbeat' },
-  { value: 'calm', label: 'Calm' },
-  { value: 'dramatic', label: 'Dramatic' },
-  { value: 'inspirational', label: 'Inspirational' },
-  { value: 'none', label: 'No Music' },
-]
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-// ── Photo drag-drop zone ──────────────────────────────────────────────────────
+function wordCount(text: string) {
+  return text.trim().split(/\s+/).filter(Boolean).length
+}
 
-function PhotoDropZone({
-  photos,
-  onAdd,
-  onRemove,
-  uploading,
+function estimatedDuration(text: string) {
+  return Math.round((wordCount(text) / WORDS_PER_MIN) * 60)
+}
+
+function formatBytes(n: number) {
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+// ── Asset thumbnail ───────────────────────────────────────────────────────────
+
+function AssetThumb({
+  asset,
+  selected,
+  disabled,
+  onClick,
 }: {
-  photos: Asset[]
-  onAdd: (files: FileList) => void
-  onRemove: (id: string) => void
-  uploading: boolean
+  asset: Asset
+  selected: boolean
+  disabled: boolean
+  onClick: () => void
 }) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [dragOver, setDragOver] = useState(false)
-
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault()
-    setDragOver(false)
-    if (e.dataTransfer.files.length > 0) onAdd(e.dataTransfer.files)
-  }
-
   return (
-    <div className="space-y-3">
-      <div
-        className={`relative flex min-h-[120px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors ${
-          dragOver
-            ? 'border-fantom-blue bg-fantom-blue/5'
-            : 'border-fantom-steel-border hover:border-fantom-blue/50'
-        }`}
-        onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => e.key === 'Enter' && inputRef.current?.click()}
-        aria-label="Upload photos"
-      >
-        {uploading ? (
-          <Spinner size="sm" />
-        ) : (
-          <>
-            <p className="text-sm text-fantom-text-muted">Drop photos here or click to browse</p>
-            <p className="mt-1 text-xs text-fantom-text-muted/60">
-              JPEG, PNG, WebP — max 100 MB each · up to {MAX_PHOTOS} photos
-            </p>
-          </>
-        )}
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept="image/jpeg,image/png,image/webp,image/gif"
-          className="hidden"
-          onChange={(e) => e.target.files && onAdd(e.target.files)}
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled && !selected}
+      className={`group relative aspect-square overflow-hidden rounded-lg border-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fantom-blue ${
+        selected
+          ? 'border-fantom-blue shadow-md shadow-fantom-blue/20'
+          : disabled
+          ? 'cursor-not-allowed border-fantom-steel-border opacity-40'
+          : 'border-fantom-steel-border hover:border-fantom-blue/50'
+      }`}
+      title={asset.originalFilename}
+      aria-pressed={selected}
+    >
+      {asset.kind === 'image' ? (
+        <img
+          src={asset.publicUrl}
+          alt={asset.originalFilename}
+          className="h-full w-full object-cover"
         />
-      </div>
-
-      {photos.length > 0 && (
-        <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
-          {photos.map((photo, i) => (
-            <div key={photo.id} className="group relative aspect-square overflow-hidden rounded-md">
-              <img
-                src={photo.publicUrl}
-                alt={photo.originalFilename}
-                className="h-full w-full object-cover"
-              />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
-                <button
-                  onClick={(e) => { e.stopPropagation(); onRemove(photo.id) }}
-                  className="rounded-full bg-red-500/90 px-2 py-0.5 text-xs text-white"
-                  aria-label={`Remove photo ${i + 1}`}
-                >
-                  Remove
-                </button>
-              </div>
-              <span className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5 text-center text-[10px] text-white">
-                {i + 1}
-              </span>
-            </div>
-          ))}
+      ) : asset.kind === 'video' ? (
+        <div className="relative h-full w-full bg-fantom-steel">
+          <video
+            src={asset.publicUrl}
+            className="h-full w-full object-cover"
+            preload="metadata"
+            muted
+            playsInline
+          />
+          {/* Play icon overlay */}
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+            <svg className="h-6 w-6 text-white drop-shadow" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7L8 5z" />
+            </svg>
+          </div>
+        </div>
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-fantom-steel">
+          <svg className="h-6 w-6 text-fantom-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
         </div>
       )}
-    </div>
+
+      {/* Selected check */}
+      {selected && (
+        <div className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-fantom-blue shadow">
+          <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+      )}
+    </button>
   )
 }
 
-// ── Caption selector ──────────────────────────────────────────────────────────
+// ── Render progress bar ───────────────────────────────────────────────────────
 
-function CaptionSelector({
-  captions,
-  selected,
-  onSelect,
-  custom,
-  onCustomChange,
-}: {
-  captions: string[]
-  selected: string
-  onSelect: (c: string) => void
-  custom: string
-  onCustomChange: (v: string) => void
-}) {
-  const [useCustom, setUseCustom] = useState(false)
+function RenderProgress({ renderJobId }: { renderJobId: string }) {
+  const [pct, setPct] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    async function poll() {
+      while (!cancelled) {
+        try {
+          const r = await apiFetch<{ progress: number; status: string }>(`/jobs/${renderJobId}`)
+          if (!cancelled) setPct(r.progress ?? 0)
+          if (r.status === 'completed' || r.status === 'failed' || r.status === 'cancelled') break
+        } catch { /* silent */ }
+        await new Promise((res) => setTimeout(res, 3000))
+      }
+    }
+    void poll()
+    return () => { cancelled = true }
+  }, [renderJobId])
 
   return (
-    <div className="space-y-2">
-      {captions.map((c, i) => (
-        <button
-          key={i}
-          onClick={() => { setUseCustom(false); onSelect(c) }}
-          className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-            !useCustom && selected === c
-              ? 'border-fantom-blue bg-fantom-blue/10 text-fantom-text'
-              : 'border-fantom-steel-border text-fantom-text-muted hover:border-fantom-blue/50'
-          }`}
-        >
-          {c}
-        </button>
-      ))}
-      <div className="space-y-1">
-        <Label className="text-xs text-fantom-text-muted">Or write your own</Label>
-        <Input
-          value={custom}
-          onChange={(e) => {
-            setUseCustom(true)
-            onCustomChange(e.target.value)
-            onSelect(e.target.value)
-          }}
-          onFocus={() => { if (custom) setUseCustom(true) }}
-          placeholder="Custom caption (≤12 words)..."
-          className={`text-sm ${useCustom && custom ? 'border-fantom-blue' : ''}`}
-        />
+    <div className="space-y-1.5">
+      <div className="flex justify-between text-xs text-fantom-text-muted">
+        <span>Generating clips…</span>
+        <span>{pct}%</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-fantom-steel">
+        <div className="h-full rounded-full bg-fantom-blue transition-all duration-500" style={{ width: `${pct}%` }} />
       </div>
     </div>
   )
@@ -208,128 +186,99 @@ function CaptionSelector({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function ShortsCreatePage() {
+export default function ShortsVPFPage() {
   const router = useRouter()
 
-  // Data
+  // ── Library data ─────────────────────────────────────────────────────────────
+  const [libraryAssets, setLibraryAssets] = useState<Asset[]>([])
+  const [libraryLoading, setLibraryLoading] = useState(true)
   const [brandKits, setBrandKits] = useState<BrandKit[]>([])
   const [voices, setVoices] = useState<VoiceClone[]>([])
 
-  // Form state
-  const [photos, setPhotos] = useState<Asset[]>([])
+  // ── Form state ────────────────────────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [vibe, setVibe] = useState<ShortVibe>('calm_walkthrough')
-  const [brandKitId, setBrandKitId] = useState<string>('')
-  const [voiceCloneId, setVoiceCloneId] = useState<string>('')
-  const [musicVibe, setMusicVibe] = useState<MusicVibe>('calm')
-  const [targetDuration, setTargetDuration] = useState(60)
+  const [brandKitId, setBrandKitId] = useState('')
+  const [coBrandKitId, setCoBrandKitId] = useState('')
+  const [complianceKitId, setComplianceKitId] = useState('')
+  const [voiceCloneId, setVoiceCloneId] = useState('')
+  const [generateVoiceover, setGenerateVoiceover] = useState(true)
+  const [scriptMode, setScriptMode] = useState<'ai' | 'custom'>('ai')
   const [script, setScript] = useState('')
-  const [hint, setHint] = useState('')
+  const [captionMode, setCaptionMode] = useState<'ai' | 'custom' | 'none'>('ai')
   const [captionText, setCaptionText] = useState('')
-  const [customCaption, setCustomCaption] = useState('')
   const [suggestedCaptions, setSuggestedCaptions] = useState<string[]>([])
+  const [musicVibe, setMusicVibe] = useState('')
+  const [targetDuration, setTargetDuration] = useState(30)
+  const [sfxPrompt, setSfxPrompt] = useState('')
 
-  // UI state
-  const [uploading, setUploading] = useState(false)
+  // ── UI state ──────────────────────────────────────────────────────────────────
   const [generatingScript, setGeneratingScript] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [voiceError, setVoiceError] = useState(false)
+  const [job, setJob] = useState<ShortsJob | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Load brand kits + voices on mount
+  // ── Load library + brand kits + voices ────────────────────────────────────────
   useEffect(() => {
-    void apiFetch<{ brandKits: BrandKit[] }>('/brand-kits').then((r) => {
-      setBrandKits(r.brandKits ?? [])
-      const def = r.brandKits?.find((k) => k.isDefault)
+    // Load all assets (image + video) for the library picker
+    apiFetch<{ assets: Asset[] }>('/assets')
+      .then((r) => {
+        const pickable = (r.assets ?? []).filter(
+          (a) => a.kind === 'image' || a.kind === 'video',
+        )
+        setLibraryAssets(pickable)
+      })
+      .catch(() => {})
+      .finally(() => setLibraryLoading(false))
+
+    apiFetch<{ brandKits: BrandKit[] }>('/brand-kits').then((r) => {
+      const kits = r.brandKits ?? []
+      setBrandKits(kits)
+      const def = kits.find((k) => k.isDefault)
       if (def) setBrandKitId(def.id)
     }).catch(() => {})
 
-    // API returns { voices: VoiceClone[] } — all tenant clones regardless of status
-    void apiFetch<{ voices: VoiceClone[] }>('/voices').then((r) => {
+    apiFetch<{ voices: VoiceClone[] }>('/voices').then((r) => {
       const ready = (r.voices ?? []).filter((v) => v.status === 'ready')
       setVoices(ready)
     }).catch(() => {})
   }, [])
 
-  // Grouped voices for dropdown rendering
-  const sharedVoices = voices.filter((v) => !v.isPersonal)
-  const personalVoices = voices.filter((v) => v.isPersonal)
-
-  // ── Photo upload ────────────────────────────────────────────────────────────
-
-  const handlePhotoAdd = useCallback(async (files: FileList) => {
-    setUploading(true)
-    setError(null)
-    const added: Asset[] = []
-
-    for (const file of Array.from(files)) {
-      if (!file.type.startsWith('image/')) continue
-      if (photos.length + added.length >= MAX_PHOTOS) {
-        setError(`Maximum ${MAX_PHOTOS} photos per short`)
-        break
-      }
-      try {
-        const { uploadUrl, key } = await apiFetch<{ uploadUrl: string; key: string }>(
-          '/assets/upload-url',
-          {
-            method: 'POST',
-            body: JSON.stringify({ filename: file.name, mimeType: file.type, kind: 'image' }),
-          },
-        )
-
-        await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
-
-        const asset = await apiFetch<Asset>('/assets', {
-          method: 'POST',
-          body: JSON.stringify({
-            key,
-            filename: file.name,
-            kind: 'image',
-            mimeType: file.type,
-            sizeBytes: file.size,
-          }),
-        })
-
-        added.push(asset)
-      } catch (err) {
-        setError(`Upload failed for ${file.name}: ${err instanceof Error ? err.message : 'Unknown error'}`)
-      }
-    }
-
-    setPhotos((prev) => [...prev, ...added])
-    setUploading(false)
-  }, [photos.length])
-
-  const handlePhotoRemove = useCallback((id: string) => {
-    setPhotos((prev) => prev.filter((p) => p.id !== id))
+  // ── Asset selection ───────────────────────────────────────────────────────────
+  const toggleAsset = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id)
+      if (prev.length >= MAX_ASSETS) return prev
+      return [...prev, id]
+    })
   }, [])
 
-  // ── Script + caption generation ─────────────────────────────────────────────
-
+  // ── Script generation ─────────────────────────────────────────────────────────
   async function handleGenerateScript() {
-    if (photos.length === 0) {
-      setError('Add at least one photo before generating a script')
-      return
-    }
-    // Use selected brand kit name, or the first available, or a generic fallback
-    const selectedKit = brandKits.find((k) => k.id === brandKitId) ?? brandKits[0]
-    const brandKitName = selectedKit?.name ?? 'Novacor'
-
+    if (selectedIds.length === 0) { setError('Select at least one asset first'); return }
+    const kit = brandKits.find((k) => k.id === brandKitId) ?? brandKits[0]
+    if (!kit) { setError('Select a primary brand kit first'); return }
     setGeneratingScript(true)
     setError(null)
     try {
-      const result = await apiFetch<GenerateScriptResult>('/shorts/generate-script', {
-        method: 'POST',
-        body: JSON.stringify({
-          vibe,
-          brandKitName,
-          photoCount: photos.length,
-          targetDurationSeconds: targetDuration,
-          ...(hint.trim() ? { hint: hint.trim() } : {}),
-        }),
-      })
+      const result = await apiFetch<{ script: string; suggestedCaptions: string[] }>(
+        '/shorts/generate-script',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            vibe,
+            brandKitName: kit.name,
+            photoCount: selectedIds.length,
+            targetDurationSeconds: targetDuration,
+          }),
+        },
+      )
       setScript(result.script)
-      setSuggestedCaptions(result.suggestedCaptions)
-      if (result.suggestedCaptions[0]) setCaptionText(result.suggestedCaptions[0])
+      setSuggestedCaptions(result.suggestedCaptions ?? [])
+      if (captionMode === 'ai' && result.suggestedCaptions?.[0]) {
+        setCaptionText(result.suggestedCaptions[0])
+      }
     } catch (err) {
       setError(`Script generation failed: ${err instanceof Error ? err.message : 'Try again'}`)
     } finally {
@@ -337,53 +286,202 @@ export default function ShortsCreatePage() {
     }
   }
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
+  // ── Poll rendered job ─────────────────────────────────────────────────────────
+  const pollJob = useCallback(async (id: string) => {
+    try {
+      const r = await apiFetch<ShortsJob>(`/shorts/${id}`)
+      setJob(r)
+      if (r.status === 'rendered' || r.status === 'failed') {
+        if (pollRef.current) clearInterval(pollRef.current)
+      }
+    } catch { /* silent */ }
+  }, [])
 
+  // ── Submit ────────────────────────────────────────────────────────────────────
   async function handleSubmit() {
-    if (photos.length === 0) { setError('Add at least one photo'); return }
+    if (selectedIds.length === 0) { setError('Select at least one asset from your library'); return }
+    if (!brandKitId) { setError('Primary brand kit is required'); return }
+    if (generateVoiceover && !voiceCloneId) { setError('Select a voice clone (or uncheck Generate Voiceover)'); return }
     if (!script.trim()) { setError('Generate or write a script first'); return }
-    if (!voiceCloneId) {
-      setVoiceError(true)
-      setError('Select a voice before rendering')
-      return
-    }
 
     setSubmitting(true)
     setError(null)
-    setVoiceError(false)
+
     try {
-      const result = await apiFetch<{ id: string }>('/shorts', {
+      // Step 1: Create draft
+      const draft = await apiFetch<{ id: string }>('/shorts', {
         method: 'POST',
         body: JSON.stringify({
-          photoAssetIds: photos.map((p) => p.id),
+          photoAssetIds: selectedIds,
           vibe,
           script: script.trim(),
-          scriptSource: 'custom',
-          captionText: captionText.trim() || undefined,
-          captionSource: customCaption && captionText === customCaption ? 'custom' : 'ai_generated',
-          brandKitId: brandKitId || undefined,
-          voiceCloneId,
-          musicVibe,
+          scriptSource: scriptMode === 'ai' ? 'ai_generated' : 'custom',
+          captionText: captionMode !== 'none' ? captionText.trim() || undefined : undefined,
+          captionSource: captionMode === 'ai' ? 'ai_generated' : captionMode === 'custom' ? 'custom' : undefined,
+          brandKitId,
+          coBrandKitId: coBrandKitId.trim() || undefined,
+          complianceKitId: complianceKitId.trim() || undefined,
+          voiceCloneId: generateVoiceover ? voiceCloneId : undefined,
+          musicVibe: musicVibe.trim() || undefined,
           targetDurationSeconds: targetDuration,
+          sfxPrompt: sfxPrompt.trim() || undefined,
         }),
       })
-      router.push(`/studio/shorts/${result.id}`)
+
+      // Step 2: Immediately fire render
+      await apiFetch(`/shorts/${draft.id}/render`, { method: 'POST' })
+
+      // Step 3: Load initial state + start polling
+      const initial = await apiFetch<ShortsJob>(`/shorts/${draft.id}`)
+      setJob(initial)
+
+      pollRef.current = setInterval(() => void pollJob(draft.id), 5000)
     } catch (err) {
-      setError(`Failed to create short: ${err instanceof Error ? err.message : 'Try again'}`)
+      setError(`Failed: ${err instanceof Error ? err.message : 'Try again'}`)
       setSubmitting(false)
     }
   }
 
-  const canSubmit = photos.length > 0 && script.trim().length > 0 && voiceCloneId !== ''
+  // Cleanup poll on unmount
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  const sharedVoices = voices.filter((v) => !v.isPersonal)
+  const personalVoices = voices.filter((v) => v.isPersonal)
 
+  const wc = wordCount(script)
+  const estSecs = estimatedDuration(script)
+
+  // ── Result view ───────────────────────────────────────────────────────────────
+  if (job) {
+    const isRendering = job.status === 'rendering' || job.status === 'draft'
+    const assetStatuses = Object.values(job.assetRenderStatus ?? {})
+    const doneCt  = assetStatuses.filter((a) => a.status === 'done').length
+    const totalCt = assetStatuses.length
+
+    return (
+      <div className="mx-auto max-w-2xl space-y-6">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => router.push('/studio')}
+            className="text-sm text-fantom-text-muted hover:text-fantom-text"
+          >
+            ← Studio
+          </button>
+          <span className="text-fantom-text-muted">/</span>
+          <span className="text-sm text-fantom-text">Render</span>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold text-fantom-text">
+            {isRendering ? 'Generating…' : job.status === 'rendered' ? 'Your Short' : 'Render Failed'}
+          </h1>
+          <Badge
+            variant={
+              job.status === 'rendered' ? 'success' :
+              job.status === 'failed'   ? 'danger'  :
+              'warning'
+            }
+          >
+            {job.status === 'rendered' ? 'Ready' : job.status === 'failed' ? 'Failed' : 'Rendering…'}
+          </Badge>
+        </div>
+
+        {/* Progress */}
+        {isRendering && (
+          <Card>
+            <CardContent className="space-y-4 pt-4">
+              {job.renderJobId && <RenderProgress renderJobId={job.renderJobId} />}
+              {totalCt > 0 && (
+                <p className="text-xs text-fantom-text-muted">
+                  Runway clips: {doneCt}/{totalCt} complete
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Video player */}
+        {job.status === 'rendered' && job.outputVideoUrl && (
+          <Card>
+            <CardContent className="space-y-4 pt-4">
+              <div className="flex justify-center">
+                <video
+                  src={job.outputVideoUrl}
+                  controls
+                  playsInline
+                  className="max-h-[600px] max-w-[338px] w-full rounded-xl bg-black"
+                  style={{ aspectRatio: '9/16' }}
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-wrap gap-2 justify-center">
+                <a
+                  href={job.outputVideoUrl}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-1.5 text-sm text-fantom-text hover:bg-fantom-steel-lighter transition-colors"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  Download
+                </a>
+                <button
+                  onClick={() => void navigator.clipboard.writeText(job.outputVideoUrl!)}
+                  className="inline-flex items-center gap-1.5 rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-1.5 text-sm text-fantom-text hover:bg-fantom-steel-lighter transition-colors"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+                  </svg>
+                  Copy link
+                </button>
+                <Button variant="secondary" onClick={() => router.push(`/studio/shorts-legacy/${job.id}`)}>
+                  Open detail view
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Failure */}
+        {job.status === 'failed' && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+            {job.errorMessage ?? 'Render failed — check worker logs for details'}
+          </div>
+        )}
+
+        {/* Start over */}
+        <div className="flex justify-end">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              if (pollRef.current) clearInterval(pollRef.current)
+              setJob(null)
+              setSubmitting(false)
+            }}
+          >
+            {job.status === 'failed' ? 'Retry with edits' : 'Create another'}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Form view ─────────────────────────────────────────────────────────────────
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-fantom-text">Create Short</h1>
+        <div className="flex items-center gap-2 text-sm text-fantom-text-muted mb-1">
+          <button onClick={() => router.push('/studio')} className="hover:text-fantom-text">
+            Studio
+          </button>
+          <span>/</span>
+          <span className="text-fantom-text">Create a Short</span>
+        </div>
+        <h1 className="text-2xl font-semibold text-fantom-text">Create a Short</h1>
         <p className="mt-1 text-sm text-fantom-text-muted">
-          Vertical 9:16 video · 1080 × 1920 · up to 2 minutes
+          Vertical 9:16 · 1080 × 1920 · AI voiceover · Runway motion clips
         </p>
       </div>
 
@@ -393,271 +491,406 @@ export default function ShortsCreatePage() {
         </div>
       )}
 
-      {/* ── Photos ─────────────────────────────────────────────────────────── */}
+      {/* ── Step 1: Input assets ─────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            Photos
-            {photos.length > 0 && (
-              <Badge variant="neutral" className="ml-2">{photos.length} / {MAX_PHOTOS}</Badge>
+            1 — Input Assets
+            {selectedIds.length > 0 && (
+              <Badge variant={selectedIds.length >= MAX_ASSETS ? 'warning' : 'neutral'} className="ml-2">
+                {selectedIds.length} of {MAX_ASSETS} selected
+              </Badge>
             )}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <PhotoDropZone
-            photos={photos}
-            onAdd={handlePhotoAdd}
-            onRemove={handlePhotoRemove}
-            uploading={uploading}
-          />
+        <CardContent className="space-y-3">
+          <p className="text-xs text-fantom-text-muted">
+            Select 1–{MAX_ASSETS} photos or videos from your library. Selected order sets clip sequence.
+          </p>
+
+          {libraryLoading ? (
+            <div className="flex justify-center py-8">
+              <Spinner size="lg" />
+            </div>
+          ) : libraryAssets.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-fantom-steel-border py-10 text-center">
+              <p className="text-sm text-fantom-text-muted">No images or videos in your library yet.</p>
+              <button
+                onClick={() => router.push('/library')}
+                className="text-sm text-fantom-blue hover:underline"
+              >
+                Upload assets in the Library →
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
+              {libraryAssets.map((asset) => (
+                <AssetThumb
+                  key={asset.id}
+                  asset={asset}
+                  selected={selectedIds.includes(asset.id)}
+                  disabled={selectedIds.length >= MAX_ASSETS}
+                  onClick={() => toggleAsset(asset.id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {selectedIds.length > 0 && (
+            <p className="text-xs text-fantom-text-muted">
+              {selectedIds.length} asset{selectedIds.length !== 1 ? 's' : ''} selected · sequence: {selectedIds.length} clips
+            </p>
+          )}
         </CardContent>
       </Card>
 
-      {/* ── Brand + Voice + Vibe ────────────────────────────────────────────── */}
+      {/* ── Step 2: Vibe ────────────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Brand & Voice</CardTitle>
+          <CardTitle className="text-base">2 — Vibe</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {VIBE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setVibe(opt.value)}
+                className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                  vibe === opt.value
+                    ? 'border-fantom-blue bg-fantom-blue/10'
+                    : 'border-fantom-steel-border hover:border-fantom-blue/50'
+                }`}
+              >
+                <p className="text-sm font-medium text-fantom-text">{opt.label}</p>
+                <p className="mt-0.5 text-xs text-fantom-text-muted">{opt.description}</p>
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Step 3: Brand Kits ───────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">3 — Brand Kits</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Primary — required */}
+          <div className="space-y-1.5">
+            <Label htmlFor="brand-kit-primary">
+              Primary brand kit <span className="text-red-400">*</span>
+            </Label>
+            <select
+              id="brand-kit-primary"
+              value={brandKitId}
+              onChange={(e) => setBrandKitId(e.target.value)}
+              className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text focus:outline-none focus:ring-2 focus:ring-fantom-blue"
+            >
+              <option value="">— Select primary brand kit —</option>
+              {brandKits.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.name}{k.isDefault ? ' (default)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-2">
+            {/* Co-brand — optional */}
             <div className="space-y-1.5">
-              <Label htmlFor="brand-kit">Brand Kit</Label>
+              <Label htmlFor="brand-kit-cobrand">Co-brand kit <span className="text-fantom-text-muted text-xs">(optional)</span></Label>
               <select
-                id="brand-kit"
-                value={brandKitId}
-                onChange={(e) => setBrandKitId(e.target.value)}
+                id="brand-kit-cobrand"
+                value={coBrandKitId}
+                onChange={(e) => setCoBrandKitId(e.target.value)}
                 className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text focus:outline-none focus:ring-2 focus:ring-fantom-blue"
               >
-                <option value="">No brand kit</option>
+                <option value="">None</option>
                 {brandKits.map((k) => (
-                  <option key={k.id} value={k.id}>
-                    {k.name}{k.isDefault ? ' (default)' : ''}
-                  </option>
+                  <option key={k.id} value={k.id}>{k.name}</option>
                 ))}
               </select>
             </div>
 
+            {/* Compliance — optional */}
+            <div className="space-y-1.5">
+              <Label htmlFor="brand-kit-compliance">Compliance kit <span className="text-fantom-text-muted text-xs">(optional)</span></Label>
+              <select
+                id="brand-kit-compliance"
+                value={complianceKitId}
+                onChange={(e) => setComplianceKitId(e.target.value)}
+                className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text focus:outline-none focus:ring-2 focus:ring-fantom-blue"
+              >
+                <option value="">None</option>
+                {brandKits.map((k) => (
+                  <option key={k.id} value={k.id}>{k.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Step 4: Voice ────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">4 — Voice</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input
+              type="checkbox"
+              checked={generateVoiceover}
+              onChange={(e) => setGenerateVoiceover(e.target.checked)}
+              className="h-4 w-4 rounded accent-fantom-blue"
+            />
+            <span className="text-sm text-fantom-text">Generate voiceover</span>
+          </label>
+
+          {generateVoiceover && (
             <div className="space-y-1.5">
               <Label htmlFor="voice">
-                Voice <span className="text-red-400">*</span>
+                Voice clone <span className="text-red-400">*</span>
               </Label>
               <select
                 id="voice"
                 value={voiceCloneId}
-                onChange={(e) => {
-                  setVoiceCloneId(e.target.value)
-                  setVoiceError(false)
-                }}
-                className={`w-full rounded-fantom border px-3 py-2 text-sm text-fantom-text focus:outline-none focus:ring-2 focus:ring-fantom-blue bg-fantom-steel ${
-                  voiceError
-                    ? 'border-red-500 focus:ring-red-500'
-                    : 'border-fantom-steel-border'
-                }`}
+                onChange={(e) => setVoiceCloneId(e.target.value)}
+                className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text focus:outline-none focus:ring-2 focus:ring-fantom-blue"
               >
                 <option value="">— Select a voice —</option>
                 {sharedVoices.length > 0 && (
-                  <optgroup label="Shared Voices">
-                    {sharedVoices.map((v) => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
+                  <optgroup label="Shared">
+                    {sharedVoices.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </optgroup>
                 )}
                 {personalVoices.length > 0 && (
-                  <optgroup label="Personal Voices">
-                    {personalVoices.map((v) => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
+                  <optgroup label="Personal">
+                    {personalVoices.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </optgroup>
                 )}
               </select>
-              {voiceError && (
-                <p className="text-xs text-red-400">A voice is required to render</p>
-              )}
               {voices.length === 0 && (
                 <p className="text-xs text-fantom-text-muted">
-                  No voices found.{' '}
-                  <a href="/voices" className="text-fantom-blue hover:underline">
-                    Create a voice clone
-                  </a>{' '}
-                  first.
+                  No voices ready.{' '}
+                  <a href="/voices" className="text-fantom-blue hover:underline">Create a voice clone</a> first.
                 </p>
               )}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Step 5: Script ───────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">5 — Script</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {/* Mode toggle */}
+          <div className="flex gap-1 rounded-lg border border-fantom-steel-border bg-fantom-steel p-1">
+            {(['ai', 'custom'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setScriptMode(mode)}
+                className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  scriptMode === mode
+                    ? 'bg-fantom-steel-lighter text-fantom-text shadow-sm'
+                    : 'text-fantom-text-muted hover:text-fantom-text'
+                }`}
+              >
+                {mode === 'ai' ? 'AI Generated' : 'Custom'}
+              </button>
+            ))}
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Vibe</Label>
-            <div className="grid gap-2 sm:grid-cols-3">
-              {VIBE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setVibe(opt.value)}
-                  className={`rounded-lg border px-3 py-2 text-left transition-colors ${
-                    vibe === opt.value
-                      ? 'border-fantom-blue bg-fantom-blue/10'
-                      : 'border-fantom-steel-border hover:border-fantom-blue/50'
-                  }`}
-                >
-                  <p className="text-sm font-medium text-fantom-text">{opt.label}</p>
-                  <p className="mt-0.5 text-xs text-fantom-text-muted">{opt.description}</p>
-                </button>
-              ))}
-            </div>
+          {scriptMode === 'ai' && (
+            <Button
+              variant="secondary"
+              onClick={handleGenerateScript}
+              disabled={generatingScript || selectedIds.length === 0 || !brandKitId}
+              className="w-full"
+            >
+              {generatingScript ? (
+                <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
+              ) : script ? (
+                'Regenerate Script'
+              ) : (
+                'Generate Script with AI'
+              )}
+            </Button>
+          )}
+
+          {(scriptMode === 'ai' && !script && !generatingScript) && (
+            <p className="text-center text-xs text-fantom-text-muted">
+              {selectedIds.length === 0 ? 'Select assets first' : !brandKitId ? 'Select a brand kit first' : 'Click to generate'}
+            </p>
+          )}
+
+          <div className="space-y-1">
+            <textarea
+              value={script}
+              onChange={(e) => setScript(e.target.value)}
+              placeholder={scriptMode === 'ai' ? 'AI script will appear here — or type your own…' : 'Write your voiceover script…'}
+              rows={6}
+              className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/50 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
+            />
+            {script && (
+              <p className="text-right text-xs text-fantom-text-muted">
+                {wc} words · ~{estSecs}s voiceover
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {/* ── Duration + Music ────────────────────────────────────────────────── */}
+      {/* ── Step 6: Captions ─────────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Duration & Music</CardTitle>
+          <CardTitle className="text-base">6 — Captions</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="duration">
-              Target Duration: <span className="font-semibold text-fantom-text">{targetDuration}s</span>
-            </Label>
-            <input
-              id="duration"
-              type="range"
-              min={15}
-              max={120}
-              step={5}
-              value={targetDuration}
-              onChange={(e) => setTargetDuration(Number(e.target.value))}
-              className="w-full accent-fantom-blue"
-            />
-            <div className="flex justify-between text-xs text-fantom-text-muted">
-              <span>15s</span>
-              <span>120s</span>
-            </div>
+        <CardContent className="space-y-3">
+          {/* Mode toggle */}
+          <div className="flex gap-1 rounded-lg border border-fantom-steel-border bg-fantom-steel p-1">
+            {(['ai', 'custom', 'none'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setCaptionMode(mode)}
+                className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium capitalize transition-colors ${
+                  captionMode === mode
+                    ? 'bg-fantom-steel-lighter text-fantom-text shadow-sm'
+                    : 'text-fantom-text-muted hover:text-fantom-text'
+                }`}
+              >
+                {mode === 'ai' ? 'AI' : mode === 'custom' ? 'Custom' : 'None'}
+              </button>
+            ))}
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Music Vibe</Label>
-            <div className="flex flex-wrap gap-2">
-              {MUSIC_VIBE_OPTIONS.map((opt) => (
+          {captionMode === 'ai' && suggestedCaptions.length > 0 && (
+            <div className="space-y-1.5">
+              {suggestedCaptions.map((c, i) => (
                 <button
-                  key={opt.value}
-                  onClick={() => setMusicVibe(opt.value)}
-                  className={`rounded-full border px-3 py-1 text-sm transition-colors ${
-                    musicVibe === opt.value
+                  key={i}
+                  onClick={() => setCaptionText(c)}
+                  className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                    captionText === c
                       ? 'border-fantom-blue bg-fantom-blue/10 text-fantom-text'
                       : 'border-fantom-steel-border text-fantom-text-muted hover:border-fantom-blue/50'
                   }`}
                 >
-                  {opt.label}
+                  {c}
                 </button>
               ))}
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          )}
 
-      {/* ── Script ──────────────────────────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Script</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="hint">Director hint (optional)</Label>
-            <Input
-              id="hint"
-              value={hint}
-              onChange={(e) => setHint(e.target.value)}
-              placeholder="e.g. 'Focus on the backyard and pool views'"
-            />
-          </div>
-
-          <Button
-            variant="secondary"
-            onClick={handleGenerateScript}
-            disabled={generatingScript || photos.length === 0}
-            className="w-full"
-          >
-            {generatingScript ? (
-              <span className="flex items-center gap-2">
-                <Spinner size="sm" /> Generating script &amp; captions…
-              </span>
-            ) : suggestedCaptions.length > 0 ? (
-              'Regenerate Script &amp; Captions'
-            ) : (
-              'Generate Script &amp; Captions with AI'
-            )}
-          </Button>
-          {photos.length === 0 && (
-            <p className="text-center text-xs text-fantom-text-muted">
-              Add photos first to enable AI generation
+          {captionMode === 'ai' && suggestedCaptions.length === 0 && (
+            <p className="text-xs text-fantom-text-muted">
+              Generate a script above to get AI caption suggestions.
             </p>
           )}
 
-          <div className="space-y-1.5">
-            <Label htmlFor="script">Voiceover script</Label>
-            <textarea
-              id="script"
-              value={script}
-              onChange={(e) => setScript(e.target.value)}
-              placeholder="Your voiceover script will appear here — or type your own…"
-              rows={6}
-              className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/50 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Captions — always visible ─────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Caption</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {suggestedCaptions.length > 0 ? (
-            <CaptionSelector
-              captions={suggestedCaptions}
-              selected={captionText}
-              onSelect={setCaptionText}
-              custom={customCaption}
-              onCustomChange={setCustomCaption}
-            />
-          ) : (
-            <>
-              <p className="text-xs text-fantom-text-muted">
-                Generate the script above to get 5 AI caption suggestions, or write your own below.
-              </p>
-              <div className="space-y-1.5">
-                <Label htmlFor="caption">Caption text</Label>
-                <Input
-                  id="caption"
-                  value={captionText}
-                  onChange={(e) => setCaptionText(e.target.value)}
-                  placeholder="Short overlay text (≤12 words)…"
-                />
-              </div>
-            </>
+          {captionMode !== 'none' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="caption-input">
+                {captionMode === 'custom' ? 'Caption text' : 'Or write your own'}
+              </Label>
+              <Input
+                id="caption-input"
+                value={captionText}
+                onChange={(e) => setCaptionText(e.target.value)}
+                placeholder="Short overlay text (≤12 words)…"
+              />
+            </div>
           )}
         </CardContent>
       </Card>
 
-      {/* ── Submit ──────────────────────────────────────────────────────────── */}
+      {/* ── Step 7: Music Vibe ───────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">7 — Music Vibe <span className="font-normal text-fantom-text-muted text-xs">(optional)</span></CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Input
+            value={musicVibe}
+            onChange={(e) => setMusicVibe(e.target.value)}
+            placeholder="e.g. calm acoustic, upbeat electronic, no music…"
+          />
+        </CardContent>
+      </Card>
+
+      {/* ── Step 8: Target Duration ──────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">8 — Target Duration</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Label htmlFor="duration">
+            <span className="font-semibold text-fantom-text">{targetDuration}s</span>
+          </Label>
+          <input
+            id="duration"
+            type="range"
+            min={15}
+            max={120}
+            step={5}
+            value={targetDuration}
+            onChange={(e) => setTargetDuration(Number(e.target.value))}
+            className="w-full accent-fantom-blue"
+          />
+          <div className="flex justify-between text-xs text-fantom-text-muted">
+            <span>15s</span><span>120s</span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Step 9: SFX ──────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">9 — Sound Effects <span className="font-normal text-fantom-text-muted text-xs">(optional)</span></CardTitle>
+        </CardHeader>
+        <CardContent>
+          <textarea
+            value={sfxPrompt}
+            onChange={(e) => setSfxPrompt(e.target.value)}
+            placeholder="Describe any sound effects… (stored for future use, not yet applied to renders)"
+            rows={3}
+            className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/50 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
+          />
+          <p className="mt-1 text-xs text-fantom-text-muted">
+            SFX prompt is saved to the job record — execution comes in a future milestone.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* ── Step 10: Render ──────────────────────────────────────────────────── */}
       <div className="flex items-center justify-end gap-3 pb-8">
-        {!voiceCloneId && (
-          <p className="text-sm text-fantom-text-muted">Select a voice to enable rendering</p>
-        )}
-        <Button variant="ghost" onClick={() => router.back()} disabled={submitting}>
+        <Button variant="ghost" onClick={() => router.push('/studio')} disabled={submitting}>
           Cancel
         </Button>
         <Button
           onClick={handleSubmit}
-          disabled={submitting || !canSubmit}
-          title={!voiceCloneId ? 'Select a voice first' : !script.trim() ? 'Generate or write a script first' : ''}
+          disabled={
+            submitting ||
+            selectedIds.length === 0 ||
+            !brandKitId ||
+            !script.trim() ||
+            (generateVoiceover && !voiceCloneId)
+          }
+          title={
+            selectedIds.length === 0 ? 'Select at least one asset' :
+            !brandKitId ? 'Select a primary brand kit' :
+            !script.trim() ? 'Generate or write a script' :
+            (generateVoiceover && !voiceCloneId) ? 'Select a voice clone' :
+            undefined
+          }
         >
           {submitting ? (
-            <span className="flex items-center gap-2">
-              <Spinner size="sm" /> Creating…
-            </span>
+            <span className="flex items-center gap-2"><Spinner size="sm" /> Starting render…</span>
           ) : (
-            'Create & Render'
+            'Generate Short'
           )}
         </Button>
       </div>
