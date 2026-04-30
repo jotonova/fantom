@@ -708,7 +708,7 @@ export default function ShortsVPFPage() {
             <Button
               variant="secondary"
               onClick={handleGenerateScript}
-              disabled={generatingScript || selectedIds.length === 0 || !brandKitId}
+              disabled={generatingScript}
               className="w-full"
             >
               {generatingScript ? (
@@ -716,15 +716,9 @@ export default function ShortsVPFPage() {
               ) : script ? (
                 'Regenerate Script'
               ) : (
-                'Generate Script with AI'
+                'Generate Script'
               )}
             </Button>
-          )}
-
-          {(scriptMode === 'ai' && !script && !generatingScript) && (
-            <p className="text-center text-xs text-fantom-text-muted">
-              {selectedIds.length === 0 ? 'Select assets first' : !brandKitId ? 'Select a brand kit first' : 'Click to generate'}
-            </p>
           )}
 
           <div className="space-y-1">
