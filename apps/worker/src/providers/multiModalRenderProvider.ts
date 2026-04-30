@@ -1,7 +1,6 @@
 import { promises as fs } from 'node:fs'
 import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
-import { join, dirname } from 'node:path'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildKey, putObjectFromFile, getObjectToFile, generateDownloadUrl } from '@fantom/storage'
 import { synthesize } from '@fantom/voice'
@@ -23,6 +22,7 @@ import {
   checkRunwayBudget,
   recordRunwayUsage,
 } from '../lib/db.js'
+import { generateSrtFile } from '../lib/srt.js'
 
 const _require = createRequire(import.meta.url)
 const ffmpegBinary = _require('ffmpeg-static') as string | null
@@ -37,17 +37,17 @@ function probeFilter(name: string): Promise<boolean> {
   return new Promise((resolve) => {
     const bin = ffmpegBinary ?? 'ffmpeg'
     execFile(bin, ['-filters'], { timeout: 5000 }, (_err, stdout) => {
-      // Each line looks like "... xfade  VV->V  ..."
+      // Each line looks like "... subtitles  V->V  ..."
       resolve(stdout.includes(` ${name} `) || stdout.includes(`\t${name} `))
     })
   })
 }
 
 // Resolved once at first render; safe because ffmpeg-static is immutable per deploy.
-let _drawTextAvailable: boolean | null = null
-async function isDrawTextAvailable(): Promise<boolean> {
-  if (_drawTextAvailable === null) _drawTextAvailable = await probeFilter('drawtext')
-  return _drawTextAvailable
+let _subtitlesAvailable: boolean | null = null
+async function isSubtitlesAvailable(): Promise<boolean> {
+  if (_subtitlesAvailable === null) _subtitlesAvailable = await probeFilter('subtitles')
+  return _subtitlesAvailable
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -70,54 +70,18 @@ function probeVideoDuration(filePath: string): Promise<number> {
   })
 }
 
-const _workerRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const BUNDLED_FONT = join(_workerRoot, 'fonts', 'DejaVuSans-Bold.ttf')
-
-async function findFontPath(): Promise<string | null> {
-  const candidates = [
-    BUNDLED_FONT, // always checked first — bundled at deploy time
-    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-    '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
-    '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
-    '/System/Library/Fonts/Helvetica.ttc',
-  ]
-  for (const p of candidates) {
-    try {
-      await fs.access(p)
-      return p
-    } catch {
-      // try next
-    }
-  }
-  return null
-}
-
 /** Run at worker startup to surface ffmpeg capability gaps before any job runs. */
 export async function runFfmpegDiagnostics(): Promise<void> {
-  const drawTextOk = await isDrawTextAvailable()
-  const fontPath = await findFontPath()
+  const subtitlesOk = await isSubtitlesAvailable()
   console.log(
-    `[ffmpeg-diag] drawtext filter: ${drawTextOk ? 'available' : 'MISSING — caption renders will fail'}`,
+    `[ffmpeg-diag] subtitles filter: ${subtitlesOk ? 'available' : 'MISSING — caption renders will fail'}`,
   )
-  console.log(
-    `[ffmpeg-diag] font path: ${fontPath ?? 'MISSING — caption renders will fail'}`,
-  )
-  if (!drawTextOk) {
+  if (!subtitlesOk) {
     console.error(
-      '[ffmpeg-diag] FATAL: ffmpeg-static binary is missing libfreetype/drawtext support. ' +
-        'Caption overlays will not render. Recompile or replace ffmpeg-static.',
+      '[ffmpeg-diag] CRITICAL: ffmpeg-static binary is missing the subtitles/libass filter. ' +
+        'Caption overlays will not render.',
     )
   }
-}
-
-function escapeFfmpegText(text: string): string {
-  return text
-    .replace(/[^\x00-\x7F]/g, '')  // strip non-ASCII (emoji etc — drawtext font won't have glyphs)
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, '\u2019')
-    .replace(/:/g, '\\:')
-    .replace(/[\n\r]+/g, ' ')
-    .trim()
 }
 
 const IMAGE_EXT: Record<string, string> = {
@@ -181,9 +145,8 @@ interface ComposeParams {
   voiceAudio: string
   voiceDuration: number
   musicAudio: string | null
-  /** Null, or null if drawtext unavailable in current ffmpeg build. */
-  captionText: string | null
-  fontPath: string | null
+  /** Path to a pre-generated .srt file, or null if captions are disabled. */
+  srtPath: string | null
   logoPath: string | null
   coBrandLogoPath: string | null
   complianceLogoPath: string | null
@@ -199,8 +162,7 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
       voiceAudio,
       voiceDuration: D,
       musicAudio,
-      captionText,
-      fontPath,
+      srtPath,
       logoPath,
       coBrandLogoPath,
       complianceLogoPath,
@@ -247,14 +209,12 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
       currentVideo = 'video_xfade'
     }
 
-    // Phase 3: Captions
-    if (captionText) {
-      const esc = escapeFfmpegText(captionText)
-      const fontfileParam = fontPath ? `fontfile='${fontPath}':` : ''
+    // Phase 3: Captions (SRT-based via subtitles filter — no libfreetype required)
+    if (srtPath) {
       filterParts.push(
-        `[${currentVideo}]drawtext=${fontfileParam}text='${esc}':` +
-          `fontsize=52:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12:` +
-          `x=(w-text_w)/2:y=h*0.85[captioned]`,
+        `[${currentVideo}]subtitles='${srtPath}':` +
+          `force_style='Fontsize=18,PrimaryColour=&Hffffff,OutlineColour=&H80000000,` +
+          `BorderStyle=4,Outline=4,MarginV=40,Alignment=2'[captioned]`,
       )
       currentVideo = 'captioned'
     }
@@ -606,21 +566,16 @@ export class MultiModalRenderProvider implements RenderProvider {
 
       onProgress(70)
 
-      // ── 7. Find font ──────────────────────────────────────────────────────
-      const fontPath = await findFontPath()
-      if (!fontPath) log('No font file found — using ffmpeg default')
+      // ── 7. Generate SRT captions ──────────────────────────────────────────
+      const srtPath = await generateSrtFile(captionText, jobId, voiceDuration)
+      if (srtPath) {
+        tempFiles.push(srtPath)
+        log('SRT captions written')
+      }
 
       // ── 8. ffmpeg compose ─────────────────────────────────────────────────
       const tmpOutput = join(tmpdir(), `fantom-mm-${jobId}-output.mp4`)
       tempFiles.push(tmpOutput)
-
-      const drawTextOk = await isDrawTextAvailable()
-      if (!drawTextOk && captionText) {
-        throw new Error(
-          'ffmpeg-static binary is missing drawtext/libfreetype support — cannot render captions. ' +
-            'See [ffmpeg-diag] log lines at worker startup for details.',
-        )
-      }
 
       log('Composing final video...')
       const durationSeconds = await buildComposeCommand({
@@ -628,8 +583,7 @@ export class MultiModalRenderProvider implements RenderProvider {
         voiceAudio: tmpAudio,
         voiceDuration,
         musicAudio: tmpMusic,
-        captionText: captionText ?? null,
-        fontPath,
+        srtPath,
         logoPath,
         coBrandLogoPath,
         complianceLogoPath,
