@@ -551,20 +551,32 @@ export default function ShortsVPFPage() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-2 sm:grid-cols-3">
-            {VIBE_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setVibe(opt.value)}
-                className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                  vibe === opt.value
-                    ? 'border-fantom-blue bg-fantom-blue/10'
-                    : 'border-fantom-steel-border hover:border-fantom-blue/50'
-                }`}
-              >
-                <p className="text-sm font-medium text-fantom-text">{opt.label}</p>
-                <p className="mt-0.5 text-xs text-fantom-text-muted">{opt.description}</p>
-              </button>
-            ))}
+            {VIBE_OPTIONS.map((opt) => {
+              const active = vibe === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => setVibe(opt.value)}
+                  className={`relative rounded-lg border-2 px-3 py-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fantom-blue ${
+                    active
+                      ? 'border-fantom-blue bg-fantom-blue/15 ring-1 ring-fantom-blue/30'
+                      : 'border-fantom-steel-border hover:border-fantom-blue/50 hover:bg-fantom-steel'
+                  }`}
+                >
+                  {active && (
+                    <span className="absolute right-2 top-2 flex h-4 w-4 items-center justify-center rounded-full bg-fantom-blue">
+                      <svg className="h-2.5 w-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                  )}
+                  <p className={`text-sm font-semibold ${active ? 'text-fantom-blue' : 'text-fantom-text'}`}>
+                    {opt.label}
+                  </p>
+                  <p className="mt-0.5 text-xs text-fantom-text-muted">{opt.description}</p>
+                </button>
+              )
+            })}
           </div>
         </CardContent>
       </Card>
