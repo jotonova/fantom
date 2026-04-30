@@ -286,6 +286,35 @@ export default function ShortsVPFPage() {
     }
   }
 
+  // ── Caption generation (captions-only, doesn't overwrite script) ─────────────
+  async function handleGenerateCaptions() {
+    const kit = brandKits.find((k) => k.id === brandKitId) ?? brandKits[0]
+    if (!kit) { setError('Select a primary brand kit first'); return }
+    setGeneratingScript(true)
+    setError(null)
+    try {
+      const result = await apiFetch<{ script: string; suggestedCaptions: string[] }>(
+        '/shorts/generate-script',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            vibe,
+            brandKitName: kit.name,
+            photoCount: selectedIds.length || 1,
+            targetDurationSeconds: targetDuration,
+          }),
+        },
+      )
+      const captions = result.suggestedCaptions ?? []
+      setSuggestedCaptions(captions)
+      if (captions[0]) setCaptionText(captions[0])
+    } catch (err) {
+      setError(`Caption generation failed: ${err instanceof Error ? err.message : 'Try again'}`)
+    } finally {
+      setGeneratingScript(false)
+    }
+  }
+
   // ── Poll rendered job ─────────────────────────────────────────────────────────
   const pollJob = useCallback(async (id: string) => {
     try {
@@ -758,7 +787,19 @@ export default function ShortsVPFPage() {
         <CardContent className="space-y-3">
           {/* Mode toggle */}
           <div className="flex gap-1 rounded-lg border border-fantom-steel-border bg-fantom-steel p-1">
-            {(['ai', 'custom', 'none'] as const).map((mode) => (
+            <button
+              onClick={() => setCaptionMode('ai')}
+              className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                captionMode === 'ai'
+                  ? 'bg-fantom-steel-lighter text-fantom-text shadow-sm'
+                  : !script
+                  ? 'cursor-not-allowed text-fantom-text-muted/40'
+                  : 'text-fantom-text-muted hover:text-fantom-text'
+              }`}
+            >
+              AI
+            </button>
+            {(['custom', 'none'] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setCaptionMode(mode)}
@@ -768,10 +809,31 @@ export default function ShortsVPFPage() {
                     : 'text-fantom-text-muted hover:text-fantom-text'
                 }`}
               >
-                {mode === 'ai' ? 'AI' : mode === 'custom' ? 'Custom' : 'None'}
+                {mode === 'custom' ? 'Custom' : 'None'}
               </button>
             ))}
           </div>
+
+          {captionMode === 'ai' && !script && (
+            <p className="text-xs text-fantom-text-muted">
+              Captions need a script first. Pick <span className="text-fantom-text">AI Generated</span> above in Step 5 and click <span className="text-fantom-text">Generate Script</span>.
+            </p>
+          )}
+
+          {captionMode === 'ai' && script && suggestedCaptions.length === 0 && (
+            <Button
+              variant="secondary"
+              onClick={handleGenerateCaptions}
+              disabled={generatingScript}
+              className="w-full"
+            >
+              {generatingScript ? (
+                <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
+              ) : (
+                'Generate Captions'
+              )}
+            </Button>
+          )}
 
           {captionMode === 'ai' && suggestedCaptions.length > 0 && (
             <div className="space-y-1.5">
@@ -788,13 +850,19 @@ export default function ShortsVPFPage() {
                   {c}
                 </button>
               ))}
+              <Button
+                variant="secondary"
+                onClick={handleGenerateCaptions}
+                disabled={generatingScript}
+                className="w-full mt-1"
+              >
+                {generatingScript ? (
+                  <span className="flex items-center gap-2"><Spinner size="sm" /> Generating…</span>
+                ) : (
+                  'Regenerate Captions'
+                )}
+              </Button>
             </div>
-          )}
-
-          {captionMode === 'ai' && suggestedCaptions.length === 0 && (
-            <p className="text-xs text-fantom-text-muted">
-              Generate a script above to get AI caption suggestions.
-            </p>
           )}
 
           {captionMode !== 'none' && (
