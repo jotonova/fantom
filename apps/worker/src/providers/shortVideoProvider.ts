@@ -75,6 +75,8 @@ interface FilterComplexParams {
   coBrandLogoInputIdx: number | null
   complianceLogoInputIdx: number | null
   voiceDuration: number
+  /** Authoritative output length — may be longer than voiceDuration. */
+  finalDuration: number
   /** Path to a pre-generated .srt file, or null if captions are disabled. */
   srtPath: string | null
 }
@@ -93,13 +95,15 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
     logoInputIdx,
     coBrandLogoInputIdx,
     complianceLogoInputIdx,
-    voiceDuration: D,
+    voiceDuration,
+    finalDuration,
     srtPath,
   } = params
 
   const c = CROSSFADE_DURATION
-  // segDur: each photo segment duration so N segments with N-1 crossfades = D total
-  const segDur = N > 1 ? (D + c * (N - 1)) / N : D
+  // segDur based on finalDuration (authoritative), not voiceDuration.
+  // Photos are looped stills, so they can extend as long as needed.
+  const segDur = N > 1 ? (finalDuration + c * (N - 1)) / N : finalDuration
 
   const parts: string[] = []
 
@@ -173,18 +177,27 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
   }
 
   // ── Audio mix ─────────────────────────────────────────────────────────────
+  // Voice trims to its actual TTS length; music / silence fills to finalDuration.
+  // This lets photos run their full segment duration even when voice ends early.
   const audioLabel = 'audio_final'
-  const dStr = D.toFixed(3)
+  const vStr = voiceDuration.toFixed(3)
+  const fStr = finalDuration.toFixed(3)
 
   if (musicInputIdx !== null) {
-    parts.push(`[${voiceInputIdx}:a]atrim=0:${dStr},asetpts=PTS-STARTPTS[voice]`)
+    // Pad voice with silence to finalDuration so amix doesn't end early.
+    parts.push(
+      `[${voiceInputIdx}:a]atrim=0:${vStr},asetpts=PTS-STARTPTS,apad=whole_dur=${fStr}[voice]`,
+    )
     parts.push(
       `[${musicInputIdx}:a]volume=0.126,aloop=loop=-1:size=2147483647,` +
-        `atrim=0:${dStr},asetpts=PTS-STARTPTS[music]`,
+        `atrim=0:${fStr},asetpts=PTS-STARTPTS[music]`,
     )
-    parts.push(`[voice][music]amix=inputs=2:normalize=0[${audioLabel}]`)
+    parts.push(`[voice][music]amix=inputs=2:normalize=0:duration=longest[${audioLabel}]`)
   } else {
-    parts.push(`[${voiceInputIdx}:a]atrim=0:${dStr},asetpts=PTS-STARTPTS[${audioLabel}]`)
+    // No music — pad silence after voice to reach finalDuration.
+    parts.push(
+      `[${voiceInputIdx}:a]atrim=0:${vStr},asetpts=PTS-STARTPTS,apad=whole_dur=${fStr}[${audioLabel}]`,
+    )
   }
 
   return { filterStr: parts.join(';'), videoLabel: currentLabel, audioLabel }
@@ -200,6 +213,8 @@ interface RunShortFfmpegParams {
   coBrandLogoImage: string | null
   complianceLogoImage: string | null
   segDur: number
+  /** Authoritative output length used for -t flag (replaces -shortest). */
+  finalDuration: number
   filterStr: string
   videoLabel: string
   audioLabel: string
@@ -218,6 +233,7 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
       coBrandLogoImage,
       complianceLogoImage,
       segDur,
+      finalDuration,
       filterStr,
       videoLabel,
       audioLabel,
@@ -260,7 +276,8 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
       '-b:a', '192k',
       '-pix_fmt', 'yuv420p',
       '-movflags', '+faststart',
-      '-shortest',
+      // Explicit duration cap — replaces -shortest. Ensures output is exactly finalDuration.
+      '-t', finalDuration.toFixed(3),
     ])
 
     cmd = cmd.output(output)
@@ -337,6 +354,7 @@ export class ShortVideoProvider implements RenderProvider {
         script,
         captionText,
         musicVibe,
+        targetDurationSeconds,
       } = shortsJob
 
       if (!inputAssetIds || inputAssetIds.length === 0) {
@@ -448,8 +466,20 @@ export class ShortVideoProvider implements RenderProvider {
       // ── 9. Build filter complex ───────────────────────────────────────────
       const N = photoPaths.length
       const c = CROSSFADE_DURATION
-      const segDur = N > 1 ? (voiceDuration + c * (N - 1)) / N : voiceDuration
-      // (N is photo count derived from inputAssetIds)
+
+      // targetDurationSeconds is authoritative. If TTS somehow ran long, extend rather than clip.
+      const finalDuration = Math.max(targetDurationSeconds, voiceDuration)
+      if (voiceDuration > targetDurationSeconds) {
+        log(
+          `[duration] voice (${voiceDuration.toFixed(1)}s) exceeds target (${targetDurationSeconds}s) ` +
+            `— extending video to avoid cutting the audio`,
+        )
+      }
+      const segDur = N > 1 ? (finalDuration + c * (N - 1)) / N : finalDuration
+      log(
+        `[duration] target=${targetDurationSeconds}s, photos=${N}, ` +
+          `voice=${voiceDuration.toFixed(1)}s, final=${finalDuration.toFixed(1)}s, segDur=${segDur.toFixed(3)}s`,
+      )
 
       const voiceInputIdx = N
       const musicInputIdx = tmpMusic !== null ? N + 1 : null
@@ -466,6 +496,7 @@ export class ShortVideoProvider implements RenderProvider {
         coBrandLogoInputIdx,
         complianceLogoInputIdx,
         voiceDuration,
+        finalDuration,
         srtPath,
       })
 
@@ -482,6 +513,7 @@ export class ShortVideoProvider implements RenderProvider {
         coBrandLogoImage: tmpCoBrandLogo,
         complianceLogoImage: tmpComplianceLogo,
         segDur,
+        finalDuration,
         filterStr,
         videoLabel,
         audioLabel,

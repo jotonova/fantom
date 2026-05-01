@@ -57,13 +57,14 @@ function motionVibeGuidance(vibe: ShortVibe): string {
 
 function buildPrompt(input: GenerateShortScriptInput): string {
   const vibeDesc = VIBE_DESCRIPTIONS[input.vibe]
-  const approxWords = Math.round((input.targetDurationSeconds / 60) * 130) // ~130 wpm voiceover
+  // 115 wpm: conservative estimate for ElevenLabs pacing (real TTS runs ~10% slower than 130 wpm)
+  const approxWords = Math.round((input.targetDurationSeconds / 60) * 115)
 
   return `You are writing a short-form vertical video voiceover script for a real estate property listing.
 
 The video will be ${input.targetDurationSeconds} seconds long and feature ${input.photoCount} photos in a slideshow format.
 Vibe: ${input.vibe} — ${vibeDesc}
-Target word count for the voiceover: approximately ${approxWords} words.
+STRICT word count limit: ${approxWords} words maximum. Stay UNDER this number. The voiceover MUST fit within ${input.targetDurationSeconds} seconds. Fewer words is fine — more is unacceptable.
 Brand tone reference (do NOT name this brand in the script): ${input.brandKitName}
 ${input.hint ? `Director's hint: ${input.hint}` : ''}
 
