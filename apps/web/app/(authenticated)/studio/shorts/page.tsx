@@ -211,6 +211,7 @@ export default function ShortsVPFPage() {
   const [musicVibe, setMusicVibe] = useState('')
   const [targetDuration, setTargetDuration] = useState(30)
   const [sfxPrompt, setSfxPrompt] = useState('')
+  const [motionHints, setMotionHints] = useState<Record<string, string>>({})
 
   // ── UI state ──────────────────────────────────────────────────────────────────
   const [generatingScript, setGeneratingScript] = useState(false)
@@ -261,7 +262,7 @@ export default function ShortsVPFPage() {
     setGeneratingScript(true)
     setError(null)
     try {
-      const result = await apiFetch<{ script: string; suggestedCaptions: string[] }>(
+      const result = await apiFetch<{ script: string; suggestedCaptions: string[]; motionHints?: string[] }>(
         '/shorts/generate-script',
         {
           method: 'POST',
@@ -277,6 +278,13 @@ export default function ShortsVPFPage() {
       setSuggestedCaptions(result.suggestedCaptions ?? [])
       if (captionMode === 'ai' && result.suggestedCaptions?.[0]) {
         setCaptionText(result.suggestedCaptions[0])
+      }
+      // Convert ordered array → { assetId: hint } map so the worker can look up by ID
+      if (Array.isArray(result.motionHints) && result.motionHints.length > 0) {
+        const hintMap = Object.fromEntries(
+          selectedIds.map((id, i) => [id, result.motionHints![i] ?? ''])
+        )
+        setMotionHints(hintMap)
       }
     } catch (err) {
       setError(`Script generation failed: ${err instanceof Error ? err.message : 'Try again'}`)
@@ -353,6 +361,7 @@ export default function ShortsVPFPage() {
           musicVibe: musicVibe.trim() || undefined,
           targetDurationSeconds: targetDuration,
           sfxPrompt: sfxPrompt.trim() || undefined,
+          motionHints: Object.keys(motionHints).length > 0 ? motionHints : undefined,
         }),
       })
 
