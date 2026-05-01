@@ -45,13 +45,13 @@ const VIBE_DESCRIPTIONS: Record<ShortVibe, string> = {
 function motionVibeGuidance(vibe: ShortVibe): string {
   switch (vibe) {
     case 'calm_walkthrough':
-      return 'Calm Walkthrough: slow, deliberate pans and dollies. Long horizontal traversals. Occasional gentle tilt-ups for architectural detail. Avoid quick reveals.'
+      return 'Calm Walkthrough: slow, deliberate pans that travel the FULL width of the scene — edge to edge. Long, uninterrupted horizontal traversals. Occasional gentle tilt-ups for architectural detail. Every pan must complete its full journey across the frame before ending.'
     case 'excited_reveal':
-      return 'Excited Reveal: punchier dynamics, faster pans, occasional pull-backs that reveal full rooms. Mix horizontal and vertical motion. Open with a strong hook shot.'
+      return 'Excited Reveal: punchier dynamics, faster pans that sweep the ENTIRE room from one edge to the other. Occasional pull-backs that reveal the full space. Mix horizontal and vertical motion. Open with a strong hook shot that completes a full left-to-right or right-to-left pass.'
     case 'educational_breakdown':
-      return 'Educational: stable observational framing, steady pans that allow the viewer to study details. Minimal flashy motion. Clear, deliberate camera moves.'
+      return 'Educational: stable observational framing, steady pans that cover the FULL width of the scene so the viewer can study every detail. Deliberate, complete traversals — start at one edge, travel to the opposite edge. Minimal flashy motion. No partial pans.'
     default:
-      return 'Smooth cinematic camera motion, primarily lateral pans, no zooms.'
+      return 'Smooth cinematic camera motion, full edge-to-edge lateral pans, no zooms.'
   }
 }
 
@@ -71,22 +71,23 @@ Write a compelling voiceover script and 3–5 short caption suggestions for the 
 ---
 MOTION DIRECTION
 
-This video is 9:16 vertical (1080×1920). The source photos are typically landscape orientation. To show the full content of each photo across the vertical frame, your motion hints MUST favor PANS and LATERAL CAMERA MOVES over zooms. Zooms hide content; pans reveal it.
+This video is 9:16 vertical (1080×1920). The source photos are typically landscape orientation. To show the full content of each photo across the vertical frame, your motion hints MUST use FULL TRAVERSAL PANS — camera moves that travel the COMPLETE width of the scene, from one edge to the other. Partial pans and zooms hide content; full edge-to-edge pans reveal it.
 
-Generate one motion hint per photo (count: ${input.photoCount}). Each hint is a camera-centric Runway prompt, 1–2 sentences, instructing the AI to move the camera across the scene.
+Generate one motion hint per photo (count: ${input.photoCount}). Each hint is a camera-centric Runway prompt, 1–2 sentences, instructing the AI to move the camera across the ENTIRE scene.
 
 Vary the motion across the sequence for cinematic rhythm — do not repeat the same direction or technique twice in a row. Use this vibe guidance:
 
 ${motionVibeGuidance(input.vibe)}
 
 Each hint should be concrete and camera-centric. Good examples:
-  "Camera slowly pans from left to right across the room, smooth tracking shot, cinematic walkthrough feel."
-  "Slow dolly forward into the kitchen, steady horizontal motion, no zoom or tilt."
-  "Camera tilts upward revealing the vaulted ceiling, slow elegant movement."
-  "Pan right to left across the backyard, smooth horizontal traversal."
+  "Camera pans the FULL width of the room from left edge to right edge, smooth continuous tracking shot, cinematic walkthrough feel."
+  "Camera performs a complete right-to-left traversal across the kitchen, steady horizontal motion, travels all the way from the right wall to the left wall."
+  "Camera tilts upward in a full sweep from floor to ceiling, slow elegant movement revealing the vaulted ceiling."
+  "Camera pans the entire backyard in one continuous left-to-right pass, smooth horizontal traversal from fence to fence."
 
 Bad examples (do NOT generate these):
-  "Smooth cinematic motion." (too vague)
+  "Smooth cinematic motion." (too vague — no direction)
+  "Pan from left to right." (no indication of full traversal)
   "Zoom in slowly." (loses framing in 9:16)
   "The photo moves." (not camera-centric)
 ---`
