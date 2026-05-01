@@ -59,12 +59,19 @@ function buildPrompt(input: GenerateShortScriptInput): string {
   const vibeDesc = VIBE_DESCRIPTIONS[input.vibe]
   const approxWords = Math.round((input.targetDurationSeconds / 60) * 130) // ~130 wpm voiceover
 
-  return `You are writing a short-form vertical video script for a real estate brand called "${input.brandKitName}".
+  return `You are writing a short-form vertical video voiceover script for a real estate property listing.
 
 The video will be ${input.targetDurationSeconds} seconds long and feature ${input.photoCount} photos in a slideshow format.
 Vibe: ${input.vibe} — ${vibeDesc}
 Target word count for the voiceover: approximately ${approxWords} words.
+Brand tone reference (do NOT name this brand in the script): ${input.brandKitName}
 ${input.hint ? `Director's hint: ${input.hint}` : ''}
+
+IMPORTANT — DO NOT NAME THE BRAND:
+The voiceover must never mention the brand name, agency name, or any company name.
+Never open with "Welcome to [Brand]" or "This is [Brand]" or any variation.
+The brand logo is already visible on screen — the voiceover speaks to the property, not the company.
+Write as if the property itself is speaking, or as a confident, unnamed narrator describing the home.
 
 Write a compelling voiceover script and 3–5 short caption suggestions for the video.
 
