@@ -141,34 +141,33 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
 
   // ── Logo watermarks ───────────────────────────────────────────────────────
   if (logoInputIdx !== null) {
-    // Scale to fit within 200×100 preserving aspect ratio, then apply 90% opacity
+    // Primary brand: fits within 300×150 bounding box, 90% opacity — top-left
     parts.push(
-      `[${logoInputIdx}:v]scale=200:100:force_original_aspect_ratio=decrease,` +
+      `[${logoInputIdx}:v]scale=300:150:force_original_aspect_ratio=decrease,` +
         `format=rgba,colorchannelmixer=aa=0.9[logo_primary]`,
     )
-    // Top-left x=32 y=32
     parts.push(`[${currentLabel}][logo_primary]overlay=x=32:y=32[wm1]`)
     currentLabel = 'wm1'
   }
 
   if (coBrandLogoInputIdx !== null) {
-    // 80% of primary bounding box (160×80), 90% opacity
+    // Co-brand (agent identity): fits within 320×160 bounding box, 90% opacity — bottom-left.
+    // y=H-h-200: bottom edge of logo sits 200px above the frame bottom, well above the
+    // SRT caption zone (MarginV=40 → captions end ~40px from bottom, start ~150px from bottom).
     parts.push(
-      `[${coBrandLogoInputIdx}:v]scale=160:80:force_original_aspect_ratio=decrease,` +
+      `[${coBrandLogoInputIdx}:v]scale=320:160:force_original_aspect_ratio=decrease,` +
         `format=rgba,colorchannelmixer=aa=0.9[logo_cobrand]`,
     )
-    // Bottom-left x=32, sits 200px above bottom edge
     parts.push(`[${currentLabel}][logo_cobrand]overlay=x=32:y=H-h-200[wm2]`)
     currentLabel = 'wm2'
   }
 
   if (complianceLogoInputIdx !== null) {
-    // Max 60px tall, 90% opacity
+    // Compliance: max 60px tall, bottom-center, 16px from frame bottom
     parts.push(
       `[${complianceLogoInputIdx}:v]scale=180:60:force_original_aspect_ratio=decrease,` +
         `format=rgba,colorchannelmixer=aa=0.9[logo_compliance]`,
     )
-    // Bottom-center, 16px from bottom
     parts.push(`[${currentLabel}][logo_compliance]overlay=x=(W-w)/2:y=H-h-16[wm3]`)
     currentLabel = 'wm3'
   }

@@ -227,36 +227,35 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
 
     if (logoPath !== null) {
       const idx = nextInputIdx++
-      // Scale to fit within 200×100 preserving aspect ratio, then apply 90% opacity
+      // Primary brand: fits within 300×150 bounding box, 90% opacity — top-left
       filterParts.push(
-        `[${idx}:v]scale=200:100:force_original_aspect_ratio=decrease,` +
+        `[${idx}:v]scale=300:150:force_original_aspect_ratio=decrease,` +
           `format=rgba,colorchannelmixer=aa=0.9[logo_primary]`,
       )
-      // Top-left x=32 y=32
       filterParts.push(`[${currentVideo}][logo_primary]overlay=x=32:y=32[wm1]`)
       currentVideo = 'wm1'
     }
 
     if (coBrandLogoPath !== null) {
       const idx = nextInputIdx++
-      // 80% of primary bounding box (160×80), 90% opacity
+      // Co-brand (agent identity): fits within 320×160 bounding box, 90% opacity — bottom-left.
+      // y=H-h-200: bottom edge of logo sits 200px above the frame bottom, well above the
+      // SRT caption zone (MarginV=40 → captions end ~40px from bottom, start ~150px from bottom).
       filterParts.push(
-        `[${idx}:v]scale=160:80:force_original_aspect_ratio=decrease,` +
+        `[${idx}:v]scale=320:160:force_original_aspect_ratio=decrease,` +
           `format=rgba,colorchannelmixer=aa=0.9[logo_cobrand]`,
       )
-      // Bottom-left x=32, sits 200px above bottom edge
       filterParts.push(`[${currentVideo}][logo_cobrand]overlay=x=32:y=H-h-200[wm2]`)
       currentVideo = 'wm2'
     }
 
     if (complianceLogoPath !== null) {
       const idx = nextInputIdx++
-      // Max 60px tall, 90% opacity
+      // Compliance: max 60px tall, bottom-center, 16px from frame bottom
       filterParts.push(
         `[${idx}:v]scale=180:60:force_original_aspect_ratio=decrease,` +
           `format=rgba,colorchannelmixer=aa=0.9[logo_compliance]`,
       )
-      // Bottom-center, 16px from bottom
       filterParts.push(`[${currentVideo}][logo_compliance]overlay=x=(W-w)/2:y=H-h-16[wm3]`)
       currentVideo = 'wm3'
     }
