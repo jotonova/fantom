@@ -461,13 +461,14 @@ export class MultiModalRenderProvider implements RenderProvider {
           // base64 data URLs exceed Runway's 5MB limit for high-res photos;
           // the R2 public domain is not reliably accessible externally.
           const promptImage = await generateDownloadUrl(asset.r2Key)
-          const hint = motionHints?.[assetId]
+          const promptText = (motionHints as Record<string, string> | null)?.[assetId]?.trim()
+            || 'smooth cinematic camera motion, lateral pan'
 
-          log(`[asset ${index + 1}] Submitting to Runway Gen-3 Turbo (presigned url)`)
+          log(`[asset ${index + 1}] Submitting to Runway Gen-3 Turbo — promptText: ${promptText}`)
 
           const taskId = await generateMotionClip({
             promptImage,
-            ...(hint ? { promptText: hint } : {}),
+            promptText,
           })
 
           // Update status with task ID
