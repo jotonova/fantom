@@ -72,6 +72,8 @@ interface FilterComplexParams {
   voiceInputIdx: number
   musicInputIdx: number | null
   logoInputIdx: number | null
+  coBrandLogoInputIdx: number | null
+  complianceLogoInputIdx: number | null
   voiceDuration: number
   /** Path to a pre-generated .srt file, or null if captions are disabled. */
   srtPath: string | null
@@ -89,6 +91,8 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
     voiceInputIdx,
     musicInputIdx,
     logoInputIdx,
+    coBrandLogoInputIdx,
+    complianceLogoInputIdx,
     voiceDuration: D,
     srtPath,
   } = params
@@ -135,13 +139,38 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
     currentLabel = 'captioned'
   }
 
-  // ── Logo watermark ────────────────────────────────────────────────────────
+  // ── Logo watermarks ───────────────────────────────────────────────────────
   if (logoInputIdx !== null) {
-    const nextLabel = 'watermarked'
+    // Scale to fit within 200×100 preserving aspect ratio, then apply 90% opacity
     parts.push(
-      `[${currentLabel}][${logoInputIdx}:v]scale=120:120,overlay=x=W-w-24:y=24[${nextLabel}]`,
+      `[${logoInputIdx}:v]scale=200:100:force_original_aspect_ratio=decrease,` +
+        `format=rgba,colorchannelmixer=aa=0.9[logo_primary]`,
     )
-    currentLabel = nextLabel
+    // Top-left x=32 y=32
+    parts.push(`[${currentLabel}][logo_primary]overlay=x=32:y=32[wm1]`)
+    currentLabel = 'wm1'
+  }
+
+  if (coBrandLogoInputIdx !== null) {
+    // 80% of primary bounding box (160×80), 90% opacity
+    parts.push(
+      `[${coBrandLogoInputIdx}:v]scale=160:80:force_original_aspect_ratio=decrease,` +
+        `format=rgba,colorchannelmixer=aa=0.9[logo_cobrand]`,
+    )
+    // Bottom-left x=32, sits 200px above bottom edge
+    parts.push(`[${currentLabel}][logo_cobrand]overlay=x=32:y=H-h-200[wm2]`)
+    currentLabel = 'wm2'
+  }
+
+  if (complianceLogoInputIdx !== null) {
+    // Max 60px tall, 90% opacity
+    parts.push(
+      `[${complianceLogoInputIdx}:v]scale=180:60:force_original_aspect_ratio=decrease,` +
+        `format=rgba,colorchannelmixer=aa=0.9[logo_compliance]`,
+    )
+    // Bottom-center, 16px from bottom
+    parts.push(`[${currentLabel}][logo_compliance]overlay=x=(W-w)/2:y=H-h-16[wm3]`)
+    currentLabel = 'wm3'
   }
 
   // ── Audio mix ─────────────────────────────────────────────────────────────
@@ -169,6 +198,8 @@ interface RunShortFfmpegParams {
   voiceAudio: string
   musicAudio: string | null
   logoImage: string | null
+  coBrandLogoImage: string | null
+  complianceLogoImage: string | null
   segDur: number
   filterStr: string
   videoLabel: string
@@ -185,6 +216,8 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
       voiceAudio,
       musicAudio,
       logoImage,
+      coBrandLogoImage,
+      complianceLogoImage,
       segDur,
       filterStr,
       videoLabel,
@@ -212,8 +245,10 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
     // Music (optional)
     if (musicAudio) cmd = cmd.input(musicAudio)
 
-    // Logo (optional)
+    // Logos (optional)
     if (logoImage) cmd = cmd.input(logoImage).inputOptions(['-loop', '1'])
+    if (coBrandLogoImage) cmd = cmd.input(coBrandLogoImage).inputOptions(['-loop', '1'])
+    if (complianceLogoImage) cmd = cmd.input(complianceLogoImage).inputOptions(['-loop', '1'])
 
     cmd = cmd.outputOptions([
       '-filter_complex', filterStr,
@@ -298,6 +333,8 @@ export class ShortVideoProvider implements RenderProvider {
         inputAssetIds,
         voiceCloneId,
         brandKitId,
+        coBrandKitId,
+        complianceKitId,
         script,
         captionText,
         musicVibe,
@@ -373,25 +410,31 @@ export class ShortVideoProvider implements RenderProvider {
 
       await checkCancelled()
 
-      // ── 7. Download logo (if brand kit has one) ───────────────────────────
-      let tmpLogo: string | null = null
-      if (brandKitId) {
-        const brandKit = await getBrandKitRow(brandKitId, tenantId)
-        if (brandKit?.logoAssetId) {
-          try {
-            const logoAsset = await getAssetRow(brandKit.logoAssetId, tenantId)
-            if (logoAsset) {
-              const ext = getImageExt(logoAsset.mimeType)
-              tmpLogo = join(tmpdir(), `fantom-short-${jobId}-logo.${ext}`)
-              await getObjectToFile(logoAsset.r2Key, tmpLogo)
-              tempFiles.push(tmpLogo)
-              log('Logo downloaded')
-            }
-          } catch (err) {
-            log(`Logo download failed (skipping): ${String(err)}`)
-          }
+      // ── 7. Download logos ─────────────────────────────────────────────────
+      async function downloadKitLogo(kitId: string | null, suffix: string): Promise<string | null> {
+        if (!kitId) return null
+        try {
+          const kit = await getBrandKitRow(kitId, tenantId)
+          if (!kit?.logoAssetId) return null
+          const logoAsset = await getAssetRow(kit.logoAssetId, tenantId)
+          if (!logoAsset) return null
+          const ext = getImageExt(logoAsset.mimeType)
+          const path = join(tmpdir(), `fantom-short-${jobId}-logo-${suffix}.${ext}`)
+          await getObjectToFile(logoAsset.r2Key, path)
+          tempFiles.push(path)
+          log(`Logo downloaded: ${suffix}`)
+          return path
+        } catch (err) {
+          log(`Logo download failed for kit ${kitId} (skipping): ${String(err)}`)
+          return null
         }
       }
+
+      const [tmpLogo, tmpCoBrandLogo, tmpComplianceLogo] = await Promise.all([
+        downloadKitLogo(brandKitId ?? null, 'primary'),
+        downloadKitLogo(coBrandKitId ?? null, 'cobrand'),
+        downloadKitLogo(complianceKitId ?? null, 'compliance'),
+      ])
 
       onProgress(40)
       await checkCancelled()
@@ -411,14 +454,18 @@ export class ShortVideoProvider implements RenderProvider {
 
       const voiceInputIdx = N
       const musicInputIdx = tmpMusic !== null ? N + 1 : null
-      const logoInputIdx =
-        tmpLogo !== null ? (musicInputIdx !== null ? N + 2 : N + 1) : null
+      let nextIdx = musicInputIdx !== null ? N + 2 : N + 1
+      const logoInputIdx = tmpLogo !== null ? nextIdx++ : null
+      const coBrandLogoInputIdx = tmpCoBrandLogo !== null ? nextIdx++ : null
+      const complianceLogoInputIdx = tmpComplianceLogo !== null ? nextIdx++ : null
 
       const { filterStr, videoLabel, audioLabel } = buildFilterComplex({
         photoCount: N,
         voiceInputIdx,
         musicInputIdx,
         logoInputIdx,
+        coBrandLogoInputIdx,
+        complianceLogoInputIdx,
         voiceDuration,
         srtPath,
       })
@@ -433,6 +480,8 @@ export class ShortVideoProvider implements RenderProvider {
         voiceAudio: tmpAudio,
         musicAudio: tmpMusic,
         logoImage: tmpLogo,
+        coBrandLogoImage: tmpCoBrandLogo,
+        complianceLogoImage: tmpComplianceLogo,
         segDur,
         filterStr,
         videoLabel,
