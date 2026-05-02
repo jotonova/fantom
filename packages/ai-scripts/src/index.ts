@@ -45,13 +45,13 @@ const VIBE_DESCRIPTIONS: Record<ShortVibe, string> = {
 function motionVibeGuidance(vibe: ShortVibe): string {
   switch (vibe) {
     case 'calm_walkthrough':
-      return 'Calm Walkthrough: slow, sweeping pans at MAXIMUM traversal — the camera must travel the entire visible width of the scene with intentional confidence. Do not stop early. Push to the extreme edges. Example: "Camera performs a slow, sweeping pan from the extreme left edge of the room all the way to the extreme right wall, revealing every detail of the space in one fluid, confident motion."'
+      return 'Calm Walkthrough: slow, steady pans across each scene. Mix horizontal pans with occasional forward dolly into rooms. Use vertical tilts sparingly to highlight architectural detail.'
     case 'excited_reveal':
-      return 'Excited Reveal: bold, energetic pans with MAXIMUM traversal — aggressive sweeping motion across the entire scene from extreme edge to extreme edge. Commit fully to each move. Example: "Camera executes a bold, fast pan sweeping aggressively from the far left of the room to the far right wall, an assertive full-scene reveal with cinematic energy."'
+      return 'Excited Reveal: faster pans with clear directional intent. Open with a wide pull-back establishing shot if possible. Vary pan directions between clips. Use forward dolly for impact moments.'
     case 'educational_breakdown':
-      return 'Educational: methodical, deliberate pans at MAXIMUM traversal — the camera covers every inch of the scene from edge to edge so the viewer can study the full space. Example: "Camera performs a slow, deliberate pan from the leftmost edge of the frame to the rightmost wall, covering the entire room in one steady, authoritative traversal."'
+      return 'Educational: deliberate observational pans that let the viewer study the scene. Steady horizontal motion. Avoid quick or flashy moves — clarity over drama.'
     default:
-      return 'Maximum traversal cinematic pan — camera sweeps the full visible scene edge to edge, no zooms, no early stops.'
+      return 'Smooth steady pans across the full scene, primarily horizontal direction.'
   }
 }
 
@@ -79,30 +79,30 @@ Write a compelling voiceover script and 3–5 short caption suggestions for the 
 ---
 MOTION DIRECTION
 
-This video is 9:16 vertical (1080×1920). The source photos are typically landscape orientation. To show the full content of each photo across the vertical frame, your motion hints MUST use MAXIMUM TRAVERSAL PANS — camera moves that travel the COMPLETE width of the scene with intentional overshoot, pushing to the extreme edges. Partial pans and zooms hide content; maximum edge-to-edge traversals reveal it.
+This video is 9:16 vertical (1080×1920). The source photos are landscape orientation. Pans reveal more of each photo than zooms — favor pans.
 
-The motion should make the viewer feel the camera is aggressively exploring the entire scene. Do not stop early. Treat each photo as a wider panorama and reveal it fully — push as far as the model will allow.
+Generate one motion hint per photo (count: ${input.photoCount}). Each hint is a Runway image_to_video promptText, 1–2 sentences.
 
-Generate one motion hint per photo (count: ${input.photoCount}). Each hint is a camera-centric Runway prompt, 1–2 sentences, instructing the AI to move the camera across the ENTIRE scene.
+Frame each prompt as a concrete physical instruction with a duration. Each clip is 5 seconds. Use this template:
+  "Pan the camera [direction] across the entire scene over 5 seconds, smooth and steady, [specific visual element being revealed]."
 
-Vary the motion across the sequence for cinematic rhythm — do not repeat the same direction or technique twice in a row. Use this vibe guidance:
+Vary the motion across the sequence for cinematic rhythm — alternate directions, occasionally use forward dolly or vertical tilt. Use this vibe guidance:
 
 ${motionVibeGuidance(input.vibe)}
 
-Each hint should be concrete, camera-centric, and commit to maximum traversal. Good examples:
-  "Camera sweeps aggressively from the extreme left edge of the room all the way to the extreme right wall, bold continuous tracking shot revealing the full space."
-  "Camera executes a decisive right-to-left traversal across the entire kitchen, commits to the far left wall, steady full-width pan."
-  "Camera tilts in a full authoritative sweep from floor to vaulted ceiling, bold upward movement revealing the complete vertical span."
-  "Camera pans the entire backyard in one bold left-to-right pass from fence to fence, confident full-scene traversal."
+Concrete examples (good — physical, time-bounded, scene-anchored):
+  "Pan the camera left to right across the entire room over 5 seconds, smooth steady motion, revealing the kitchen island and beyond."
+  "Pan the camera right to left across the full width of the backyard over 5 seconds, slow and deliberate."
+  "Push the camera forward into the living room over 5 seconds, smooth dolly motion, revealing depth from foreground to background."
+  "Tilt the camera upward across the full height of the room over 5 seconds, slow and steady, revealing the ceiling."
 
-Bad examples (do NOT generate these):
-  "Smooth cinematic motion." (too vague — no direction, no commitment)
-  "Pan from left to right." (no indication of maximum traversal or edge commitment)
-  "Subtle pan." (too conservative — we need maximum movement)
-  "Slight motion." (not enough — commit fully)
-  "Gentle camera move." (too soft — be bold and deliberate)
-  "Zoom in slowly." (loses framing in 9:16)
-  "The photo moves." (not camera-centric)
+Avoid these patterns (too vague or too aggressive — both fail):
+  "Subtle motion." (too small)
+  "Smooth cinematic motion." (vague)
+  "Aggressive sweeping pan." (model retreats to safe motion when prompted with intensity words)
+  "Maximum traversal." (intensity language causes regression)
+  "Extreme pan." (same)
+  "Camera moves." (no direction, no scene anchor)
 ---`
 }
 
