@@ -59,6 +59,14 @@ interface ShortsJob {
 const MAX_ASSETS = 20
 const WORDS_PER_MIN = 130
 
+const MUSIC_VIBE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'none',          label: 'None (no music)' },
+  { value: 'calm',          label: 'Calm' },
+  { value: 'upbeat',        label: 'Upbeat' },
+  { value: 'inspirational', label: 'Inspirational' },
+  { value: 'dramatic',      label: 'Dramatic' },
+]
+
 const VIBE_OPTIONS: { value: ShortVibe; label: string; description: string }[] = [
   { value: 'excited_reveal',        label: 'Excited Reveal',   description: 'High-energy, punchy, hooks immediately' },
   { value: 'calm_walkthrough',      label: 'Calm Walkthrough', description: 'Measured, conversational, builds trust' },
@@ -208,7 +216,7 @@ export default function ShortsVPFPage() {
   const [captionMode, setCaptionMode] = useState<'ai' | 'custom' | 'none'>('ai')
   const [captionText, setCaptionText] = useState('')
   const [suggestedCaptions, setSuggestedCaptions] = useState<string[]>([])
-  const [musicVibe, setMusicVibe] = useState('')
+  const [musicVibe, setMusicVibe] = useState('none')
   const [targetDuration, setTargetDuration] = useState(30)
   const [sfxPrompt, setSfxPrompt] = useState('')
   const [motionHints, setMotionHints] = useState<Record<string, string>>({})
@@ -358,7 +366,7 @@ export default function ShortsVPFPage() {
           coBrandKitId: coBrandKitId.trim() || undefined,
           complianceKitId: complianceKitId.trim() || undefined,
           voiceCloneId: generateVoiceover ? voiceCloneId : undefined,
-          musicVibe: musicVibe.trim() || undefined,
+          musicVibe: musicVibe || undefined,
           targetDurationSeconds: targetDuration,
           sfxPrompt: sfxPrompt.trim() || undefined,
           motionHints: Object.keys(motionHints).length > 0 ? motionHints : undefined,
@@ -915,14 +923,20 @@ export default function ShortsVPFPage() {
       {/* ── Step 7: Music Vibe ───────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">7 — Music Vibe <span className="font-normal text-fantom-text-muted text-xs">(optional)</span></CardTitle>
+          <CardTitle className="text-base">7 — Music Vibe</CardTitle>
         </CardHeader>
         <CardContent>
-          <Input
+          <select
             value={musicVibe}
             onChange={(e) => setMusicVibe(e.target.value)}
-            placeholder="e.g. calm acoustic, upbeat electronic, no music…"
-          />
+            className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text focus:outline-none focus:ring-2 focus:ring-fantom-blue"
+          >
+            {MUSIC_VIBE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </CardContent>
       </Card>
 
