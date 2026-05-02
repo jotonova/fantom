@@ -242,6 +242,13 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
     let durationSeconds: number | null = null
     let lastTimemark = '00:00:00.00'
     let killed = false
+    let timedOut = false
+
+    const FFMPEG_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
+
+    console.log(
+      `[ffmpeg-compose] crf=23 photos=${photos.length} output_duration=${finalDuration.toFixed(1)}s`,
+    )
 
     // Use ceil + 1s buffer so photo loop has enough frames for all xfades
     const photoInputDur = Math.ceil(segDur + CROSSFADE_DURATION + 1)
@@ -287,6 +294,14 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
       cmd.kill('SIGTERM')
     }, { once: true })
 
+    // Hard timeout — kills ffmpeg and surfaces a clear error if encoding stalls.
+    const ffmpegTimeout = setTimeout(() => {
+      timedOut = true
+      killed = true
+      console.error(`[ffmpeg-compose] timed out after ${FFMPEG_TIMEOUT_MS / 60_000} minutes — killing process`)
+      cmd.kill('SIGTERM')
+    }, FFMPEG_TIMEOUT_MS)
+
     const pollInterval = setInterval(() => {
       void params.checkCancelled().catch((err) => {
         if (err instanceof CancelledError) abortController.abort()
@@ -300,6 +315,7 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
 
     cmd.on('end', () => {
       clearInterval(pollInterval)
+      clearTimeout(ffmpegTimeout)
       const parts = lastTimemark.split(':')
       if (parts.length === 3) {
         const [h, m, s] = parts
@@ -313,7 +329,10 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
 
     cmd.on('error', (err) => {
       clearInterval(pollInterval)
-      if (killed) reject(new CancelledError())
+      clearTimeout(ffmpegTimeout)
+      if (timedOut)
+        reject(new Error(`ffmpeg compose timed out after ${FFMPEG_TIMEOUT_MS / 60_000} minutes — likely encoding stall or filter deadlock`))
+      else if (killed) reject(new CancelledError())
       else reject(new Error(`ffmpeg failed: ${err.message}`))
     })
 
