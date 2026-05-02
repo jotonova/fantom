@@ -144,8 +144,6 @@ interface ComposeParams {
   clipPaths: string[]
   voiceAudio: string
   voiceDuration: number
-  /** User-requested video length. Authoritative — video runs this long regardless of voice length. */
-  targetDurationSeconds: number
   musicAudio: string | null
   /** Path to a pre-generated .srt file, or null if captions are disabled. */
   srtPath: string | null
@@ -163,7 +161,6 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
       clipPaths,
       voiceAudio,
       voiceDuration,
-      targetDurationSeconds,
       musicAudio,
       srtPath,
       logoPath,
@@ -172,36 +169,21 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
       output,
     } = params
 
-    // targetDurationSeconds is authoritative. Voice must fit within it.
-    // If voice somehow exceeds target (script generation failed to honour limit), use voiceDuration
-    // as a safety net so the audio is never clipped — and log a warning.
-    const finalDuration = Math.max(targetDurationSeconds, voiceDuration)
-    if (voiceDuration > targetDurationSeconds) {
+    const SEGMENT_DURATION_S = 4
+    const clips = [...clipPaths] // no recycling — one clip per photo
+    const M = clips.length
+    const finalDuration = Math.max(M * SEGMENT_DURATION_S, voiceDuration)
+    if (voiceDuration > M * SEGMENT_DURATION_S) {
       console.warn(
-        `[duration] voice (${voiceDuration.toFixed(1)}s) exceeds target (${targetDurationSeconds}s) ` +
-          `— extending video to avoid cutting the audio`,
+        `[duration] voice (${voiceDuration.toFixed(1)}s) exceeds total (${M * SEGMENT_DURATION_S}s) — extending`,
       )
     }
 
     const C = CROSSFADE_S
-
-    // Compute minimum number of clips so every clip plays at most its full 5 s.
-    // segDur = (finalDuration + C*(M-1)) / M <= RUNWAY_CLIP_DURATION_S
-    // Rearranging: M >= (finalDuration - C) / (RUNWAY_CLIP_DURATION_S - C)
-    const minClips = Math.ceil((finalDuration - C) / (RUNWAY_CLIP_DURATION_S - C))
-
-    // Loop original clips to satisfy minClips, cycling from the start if needed.
-    let clips = [...clipPaths]
-    while (clips.length < minClips) {
-      const remaining = minClips - clips.length
-      clips = [...clips, ...clipPaths.slice(0, remaining)]
-    }
-
-    const M = clips.length
     const segDur = M > 1 ? (finalDuration + C * (M - 1)) / M : finalDuration
 
     console.log(
-      `[duration] target=${targetDurationSeconds}s, clips=${M}×${RUNWAY_CLIP_DURATION_S}s=${M * RUNWAY_CLIP_DURATION_S}s, ` +
+      `[duration] photos=${M}, fixed_segment=${SEGMENT_DURATION_S}s, total=${M * SEGMENT_DURATION_S}s, ` +
         `voice=${voiceDuration.toFixed(1)}s, final=${finalDuration.toFixed(1)}s, segDur=${segDur.toFixed(3)}s`,
     )
 
@@ -423,7 +405,6 @@ export class MultiModalRenderProvider implements RenderProvider {
         captionText,
         musicVibe,
         motionHints,
-        targetDurationSeconds,
       } = shortsJob
 
       if (!inputAssetIds || inputAssetIds.length === 0) {
@@ -630,7 +611,6 @@ export class MultiModalRenderProvider implements RenderProvider {
         clipPaths,
         voiceAudio: tmpAudio,
         voiceDuration,
-        targetDurationSeconds,
         musicAudio: tmpMusic,
         srtPath,
         logoPath,
