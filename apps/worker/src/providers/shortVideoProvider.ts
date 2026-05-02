@@ -155,11 +155,11 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
   }
 
   if (coBrandLogoInputIdx !== null) {
-    // Co-brand (agent identity): fits within 320×160 bounding box, 90% opacity — bottom-left.
-    // y=H-h-200: bottom edge of logo sits 200px above the frame bottom, well above the
-    // SRT caption zone (MarginV=40 → captions end ~40px from bottom, start ~150px from bottom).
+    // Co-brand (agent identity): fits within 720×360 bounding box, 90% opacity — bottom-left.
+    // y=H-h-200: bottom edge sits 200px above the frame bottom.
+    // At max h=360: logo top at 1920-360-200=1560, bottom at 1720. Caption zone ~1720-1880 → no collision.
     parts.push(
-      `[${coBrandLogoInputIdx}:v]scale=320:160:force_original_aspect_ratio=decrease,` +
+      `[${coBrandLogoInputIdx}:v]scale=720:360:force_original_aspect_ratio=decrease,` +
         `format=rgba,colorchannelmixer=aa=0.9[logo_cobrand]`,
     )
     parts.push(`[${currentLabel}][logo_cobrand]overlay=x=32:y=H-h-200[wm2]`)
@@ -354,7 +354,6 @@ export class ShortVideoProvider implements RenderProvider {
         script,
         captionText,
         musicVibe,
-        targetDurationSeconds,
       } = shortsJob
 
       if (!inputAssetIds || inputAssetIds.length === 0) {
@@ -467,17 +466,17 @@ export class ShortVideoProvider implements RenderProvider {
       const N = photoPaths.length
       const c = CROSSFADE_DURATION
 
-      // targetDurationSeconds is authoritative. If TTS somehow ran long, extend rather than clip.
-      const finalDuration = Math.max(targetDurationSeconds, voiceDuration)
-      if (voiceDuration > targetDurationSeconds) {
+      // Duration derived from photo count — 4s per photo, no recycling.
+      // If TTS somehow ran long, extend rather than clip.
+      const finalDuration = Math.max(N * 4, voiceDuration)
+      if (voiceDuration > N * 4) {
         log(
-          `[duration] voice (${voiceDuration.toFixed(1)}s) exceeds target (${targetDurationSeconds}s) ` +
-            `— extending video to avoid cutting the audio`,
+          `[duration] voice (${voiceDuration.toFixed(1)}s) exceeds total (${N * 4}s) — extending`,
         )
       }
       const segDur = N > 1 ? (finalDuration + c * (N - 1)) / N : finalDuration
       log(
-        `[duration] target=${targetDurationSeconds}s, photos=${N}, ` +
+        `[duration] photos=${N}, fixed_segment=4s, total=${N * 4}s, ` +
           `voice=${voiceDuration.toFixed(1)}s, final=${finalDuration.toFixed(1)}s, segDur=${segDur.toFixed(3)}s`,
       )
 

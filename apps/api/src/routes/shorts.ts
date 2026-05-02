@@ -90,8 +90,8 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     if (typeof photoCount !== 'number' || photoCount < 1 || photoCount > 30) {
       return reply.code(400).send({ error: 'photoCount must be 1–30' })
     }
-    if (typeof targetDurationSeconds !== 'number' || targetDurationSeconds < 15 || targetDurationSeconds > 120) {
-      return reply.code(400).send({ error: 'targetDurationSeconds must be 15–120' })
+    if (typeof targetDurationSeconds !== 'number' || targetDurationSeconds !== photoCount * 4) {
+      return reply.code(400).send({ error: `targetDurationSeconds must be photoCount × 4 (expected ${photoCount * 4})` })
     }
 
     try {
@@ -158,6 +158,12 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     }
     if (musicVibe && !VALID_MUSIC_VIBES.has(musicVibe)) {
       return reply.code(400).send({ error: 'Invalid musicVibe' })
+    }
+    const expectedDuration = photoAssetIds.length * 4
+    if (targetDurationSeconds !== expectedDuration) {
+      return reply.code(400).send({
+        error: `targetDurationSeconds must be 4× the number of input assets (expected ${expectedDuration})`,
+      })
     }
     if (typeof voiceCloneId !== 'string' || !voiceCloneId.trim()) {
       return reply.code(400).send({ error: 'voiceCloneId is required' })
