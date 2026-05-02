@@ -262,11 +262,11 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
 
     if (coBrandLogoPath !== null) {
       const idx = nextInputIdx++
-      // Co-brand (agent identity): fits within 320×160 bounding box, 90% opacity — bottom-left.
-      // y=H-h-200: bottom edge of logo sits 200px above the frame bottom, well above the
-      // SRT caption zone (MarginV=40 → captions end ~40px from bottom, start ~150px from bottom).
+      // Co-brand (agent identity): fits within 720×360 bounding box, 90% opacity — bottom-left.
+      // y=H-h-200: bottom edge sits 200px above the frame bottom.
+      // At max h=360: logo top at 1920-360-200=1560, bottom at 1720. Caption zone ~1720-1880 → no collision.
       filterParts.push(
-        `[${idx}:v]scale=320:160:force_original_aspect_ratio=decrease,` +
+        `[${idx}:v]scale=720:360:force_original_aspect_ratio=decrease,` +
           `format=rgba,colorchannelmixer=aa=0.9[logo_cobrand]`,
       )
       filterParts.push(`[${currentVideo}][logo_cobrand]overlay=x=32:y=H-h-200[wm2]`)
