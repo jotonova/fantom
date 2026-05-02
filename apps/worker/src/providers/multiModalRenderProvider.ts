@@ -303,15 +303,21 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
     // complexFilter() passes the graph as a single spawn argument, avoiding
     // fluent-ffmpeg's whitespace-splitting of outputOptions array elements.
     cmd = cmd.complexFilter(filterParts.join(';'))
+    console.log(
+      `[ffmpeg-compose] crf=23 b:v=4000k clips=${M} output_duration=${fStr}s`,
+    )
     cmd = cmd.outputOptions([
       '-map', `[${currentVideo}]`,
       '-map', '[audio_final]',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
-      '-crf', '18',
-      '-b:v', '6000k',
-      '-maxrate', '8000k',
-      '-bufsize', '16000k',
+      // Social-media quality: crf=23 + 4000k matches Instagram/YouTube Shorts
+      // recommended bitrate. Platforms transcode anyway; crf=18 + 6000k was
+      // overkill and caused 18+ minute encode times on Render shared CPU.
+      '-crf', '23',
+      '-b:v', '4000k',
+      '-maxrate', '5000k',
+      '-bufsize', '10000k',
       '-c:a', 'aac',
       '-b:a', '192k',
       '-pix_fmt', 'yuv420p',
@@ -326,6 +332,9 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
     let durationSeconds: number | null = null
     let lastTimemark = '00:00:00.00'
     let killed = false
+    let timedOut = false
+
+    const FFMPEG_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
 
     const abortController = new AbortController()
     abortController.signal.addEventListener(
@@ -336,6 +345,14 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
       },
       { once: true },
     )
+
+    // Hard timeout — kills ffmpeg and surfaces a clear error if encoding stalls.
+    const ffmpegTimeout = setTimeout(() => {
+      timedOut = true
+      killed = true
+      console.error(`[ffmpeg-compose] timed out after ${FFMPEG_TIMEOUT_MS / 60_000} minutes — killing process`)
+      cmd.kill('SIGTERM')
+    }, FFMPEG_TIMEOUT_MS)
 
     const pollInterval = setInterval(() => {
       void params.checkCancelled().catch((err) => {
@@ -350,6 +367,7 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
 
     cmd.on('end', () => {
       clearInterval(pollInterval)
+      clearTimeout(ffmpegTimeout)
       const parts = lastTimemark.split(':')
       if (parts.length === 3) {
         const [h, m, s] = parts
@@ -363,7 +381,10 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
 
     cmd.on('error', (err) => {
       clearInterval(pollInterval)
-      if (killed) reject(new CancelledError())
+      clearTimeout(ffmpegTimeout)
+      if (timedOut)
+        reject(new Error(`ffmpeg compose timed out after ${FFMPEG_TIMEOUT_MS / 60_000} minutes — likely encoding stall or filter deadlock`))
+      else if (killed) reject(new CancelledError())
       else reject(new Error(`ffmpeg compose failed: ${err.message}`))
     })
 
