@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { apiFetch } from '../../../../src/lib/api-client'
+import { apiFetch, ApiError } from '../../../../src/lib/api-client'
 import {
   Badge,
   Button,
@@ -295,7 +295,7 @@ export default function ShortsVPFPage() {
         setMotionHints(hintMap)
       }
     } catch (err) {
-      setError(`Script generation failed: ${err instanceof Error ? err.message : 'Try again'}`)
+      setError(err instanceof ApiError ? err.message : 'Script generation failed — check your connection and try again')
     } finally {
       setGeneratingScript(false)
     }
@@ -324,7 +324,7 @@ export default function ShortsVPFPage() {
       setSuggestedCaptions(captions)
       if (captions[0]) setCaptionText(captions[0])
     } catch (err) {
-      setError(`Caption generation failed: ${err instanceof Error ? err.message : 'Try again'}`)
+      setError(err instanceof ApiError ? err.message : 'Caption generation failed — check your connection and try again')
     } finally {
       setGeneratingScript(false)
     }
@@ -382,7 +382,9 @@ export default function ShortsVPFPage() {
 
       pollRef.current = setInterval(() => void pollJob(draft.id), 5000)
     } catch (err) {
-      setError(`Failed: ${err instanceof Error ? err.message : 'Try again'}`)
+      // ApiError carries the verbatim server message (e.g. "Invalid musicVibe").
+      // Network failures (CORS, mid-deploy cold start) land here as generic Errors.
+      setError(err instanceof ApiError ? err.message : 'Failed to fetch — check your connection and try again')
       setSubmitting(false)
     }
   }
