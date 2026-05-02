@@ -104,7 +104,10 @@ export function getPublicUrl(r2Key: string): string {
 }
 
 export async function deleteObject(r2Key: string): Promise<void> {
-  await r2.send(new DeleteObjectCommand({ Bucket: bucketName(), Key: r2Key }))
+  await r2.send(
+    new DeleteObjectCommand({ Bucket: bucketName(), Key: r2Key }),
+    { abortSignal: AbortSignal.timeout(60_000) },
+  )
 }
 
 export interface ObjectMetadata {
@@ -114,7 +117,10 @@ export interface ObjectMetadata {
 }
 
 export async function getObjectMetadata(r2Key: string): Promise<ObjectMetadata> {
-  const res = await r2.send(new HeadObjectCommand({ Bucket: bucketName(), Key: r2Key }))
+  const res = await r2.send(
+    new HeadObjectCommand({ Bucket: bucketName(), Key: r2Key }),
+    { abortSignal: AbortSignal.timeout(60_000) },
+  )
   return {
     sizeBytes: res.ContentLength ?? 0,
     contentType: res.ContentType ?? 'application/octet-stream',
@@ -134,34 +140,69 @@ export async function putObject(
       Body: body,
       ContentType: contentType,
     }),
+    { abortSignal: AbortSignal.timeout(60_000) },
   )
 }
 
 // Stream a local file directly to R2 — no Buffer in Node heap.
 // ContentLength is required by S3-style APIs when body is a stream.
+// 5-minute timeout: a 20 MB video at a slow 1 Mbps upload takes ~160 s;
+// 300 s gives 2× headroom while still firing for genuinely hung connections.
+const PUT_FILE_TIMEOUT_MS = 300_000
+
 export async function putObjectFromFile(
   key: string,
   filePath: string,
   contentType: string,
 ): Promise<void> {
   const { size } = await stat(filePath)
-  await r2.send(
-    new PutObjectCommand({
-      Bucket: bucketName(),
-      Key: key,
-      Body: createReadStream(filePath),
-      ContentLength: size,
-      ContentType: contentType,
-    }),
-  )
+  const sizeMb = (size / 1_048_576).toFixed(1)
+  const t0 = Date.now()
+  console.log(`[r2] upload start — key: ${key}, size: ${sizeMb} MB`)
+
+  const signal = AbortSignal.timeout(PUT_FILE_TIMEOUT_MS)
+
+  try {
+    await r2.send(
+      new PutObjectCommand({
+        Bucket: bucketName(),
+        Key: key,
+        Body: createReadStream(filePath),
+        ContentLength: size,
+        ContentType: contentType,
+      }),
+      { abortSignal: signal },
+    )
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+    console.log(`[r2] upload complete — key: ${key}, size: ${sizeMb} MB, elapsed: ${elapsed}s`)
+  } catch (err) {
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      throw new Error(
+        `R2 upload timed out after ${PUT_FILE_TIMEOUT_MS / 1000}s ` +
+          `(key: ${key}, size: ${sizeMb} MB, elapsed: ${elapsed}s) — ` +
+          `likely a network hang between Render and Cloudflare R2`,
+      )
+    }
+    throw err
+  }
 }
 
 // Stream an R2 object directly to a local file — no Buffer in Node heap.
+const GET_FILE_TIMEOUT_MS = 300_000
+
 export async function getObjectToFile(r2Key: string, filePath: string): Promise<void> {
-  const res = await r2.send(new GetObjectCommand({ Bucket: bucketName(), Key: r2Key }))
+  const signal = AbortSignal.timeout(GET_FILE_TIMEOUT_MS)
+  const res = await r2.send(
+    new GetObjectCommand({ Bucket: bucketName(), Key: r2Key }),
+    { abortSignal: signal },
+  )
   const src = res.Body as Readable
   const dst = createWriteStream(filePath)
   await new Promise<void>((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new Error(
+      `R2 download timed out after ${GET_FILE_TIMEOUT_MS / 1000}s (key: ${r2Key})`,
+    )), { once: true })
     src.on('error', reject)
     dst.on('error', reject)
     dst.on('finish', resolve)
@@ -170,7 +211,10 @@ export async function getObjectToFile(r2Key: string, filePath: string): Promise<
 }
 
 export async function getObjectBuffer(r2Key: string): Promise<Buffer> {
-  const res = await r2.send(new GetObjectCommand({ Bucket: bucketName(), Key: r2Key }))
+  const res = await r2.send(
+    new GetObjectCommand({ Bucket: bucketName(), Key: r2Key }),
+    { abortSignal: AbortSignal.timeout(120_000) },
+  )
   const stream = res.Body as Readable
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = []
@@ -205,7 +249,10 @@ export async function checkStorageHealth(): Promise<{ healthy: boolean; error?: 
   try {
     const bucket = bucketName()
     if (!bucket) throw new Error('R2_BUCKET_NAME not configured')
-    await r2.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 }))
+    await r2.send(
+      new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 }),
+      { abortSignal: AbortSignal.timeout(30_000) },
+    )
     return { healthy: true }
   } catch (err) {
     return { healthy: false, error: err instanceof Error ? err.message : String(err) }
