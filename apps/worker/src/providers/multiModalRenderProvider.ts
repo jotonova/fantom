@@ -144,6 +144,8 @@ interface ComposeParams {
   clipPaths: string[]
   voiceAudio: string
   voiceDuration: number
+  /** User-requested video length. Authoritative — video runs this long regardless of voice length. */
+  targetDurationSeconds: number
   musicAudio: string | null
   /** Path to a pre-generated .srt file, or null if captions are disabled. */
   srtPath: string | null
@@ -160,7 +162,8 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
     const {
       clipPaths,
       voiceAudio,
-      voiceDuration: D,
+      voiceDuration,
+      targetDurationSeconds,
       musicAudio,
       srtPath,
       logoPath,
@@ -169,17 +172,38 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
       output,
     } = params
 
-    // Expand clip list to cover voice duration by looping
+    // targetDurationSeconds is authoritative. Voice must fit within it.
+    // If voice somehow exceeds target (script generation failed to honour limit), use voiceDuration
+    // as a safety net so the audio is never clipped — and log a warning.
+    const finalDuration = Math.max(targetDurationSeconds, voiceDuration)
+    if (voiceDuration > targetDurationSeconds) {
+      console.warn(
+        `[duration] voice (${voiceDuration.toFixed(1)}s) exceeds target (${targetDurationSeconds}s) ` +
+          `— extending video to avoid cutting the audio`,
+      )
+    }
+
+    const C = CROSSFADE_S
+
+    // Compute minimum number of clips so every clip plays at most its full 5 s.
+    // segDur = (finalDuration + C*(M-1)) / M <= RUNWAY_CLIP_DURATION_S
+    // Rearranging: M >= (finalDuration - C) / (RUNWAY_CLIP_DURATION_S - C)
+    const minClips = Math.ceil((finalDuration - C) / (RUNWAY_CLIP_DURATION_S - C))
+
+    // Loop original clips to satisfy minClips, cycling from the start if needed.
     let clips = [...clipPaths]
-    const naturalDuration = clips.length * RUNWAY_CLIP_DURATION_S
-    if (naturalDuration < D) {
-      const repeats = Math.ceil(D / naturalDuration)
-      for (let r = 1; r < repeats; r++) clips = [...clips, ...clipPaths]
+    while (clips.length < minClips) {
+      const remaining = minClips - clips.length
+      clips = [...clips, ...clipPaths.slice(0, remaining)]
     }
 
     const M = clips.length
-    const C = CROSSFADE_S
-    const segDur = M > 1 ? (D + C * (M - 1)) / M : D
+    const segDur = M > 1 ? (finalDuration + C * (M - 1)) / M : finalDuration
+
+    console.log(
+      `[duration] target=${targetDurationSeconds}s, clips=${M}×${RUNWAY_CLIP_DURATION_S}s=${M * RUNWAY_CLIP_DURATION_S}s, ` +
+        `voice=${voiceDuration.toFixed(1)}s, final=${finalDuration.toFixed(1)}s, segDur=${segDur.toFixed(3)}s`,
+    )
 
     const filterParts: string[] = []
 
@@ -227,51 +251,59 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
 
     if (logoPath !== null) {
       const idx = nextInputIdx++
-      // Scale to fit within 200×100 preserving aspect ratio, then apply 90% opacity
+      // Primary brand: fits within 300×150 bounding box, 90% opacity — top-left
       filterParts.push(
-        `[${idx}:v]scale=200:100:force_original_aspect_ratio=decrease,` +
+        `[${idx}:v]scale=300:150:force_original_aspect_ratio=decrease,` +
           `format=rgba,colorchannelmixer=aa=0.9[logo_primary]`,
       )
-      // Top-left x=32 y=32
       filterParts.push(`[${currentVideo}][logo_primary]overlay=x=32:y=32[wm1]`)
       currentVideo = 'wm1'
     }
 
     if (coBrandLogoPath !== null) {
       const idx = nextInputIdx++
-      // 80% of primary bounding box (160×80), 90% opacity
+      // Co-brand (agent identity): fits within 320×160 bounding box, 90% opacity — bottom-left.
+      // y=H-h-200: bottom edge of logo sits 200px above the frame bottom, well above the
+      // SRT caption zone (MarginV=40 → captions end ~40px from bottom, start ~150px from bottom).
       filterParts.push(
-        `[${idx}:v]scale=160:80:force_original_aspect_ratio=decrease,` +
+        `[${idx}:v]scale=320:160:force_original_aspect_ratio=decrease,` +
           `format=rgba,colorchannelmixer=aa=0.9[logo_cobrand]`,
       )
-      // Bottom-left x=32, sits 200px above bottom edge
       filterParts.push(`[${currentVideo}][logo_cobrand]overlay=x=32:y=H-h-200[wm2]`)
       currentVideo = 'wm2'
     }
 
     if (complianceLogoPath !== null) {
       const idx = nextInputIdx++
-      // Max 60px tall, 90% opacity
+      // Compliance: max 60px tall, bottom-center, 16px from frame bottom
       filterParts.push(
         `[${idx}:v]scale=180:60:force_original_aspect_ratio=decrease,` +
           `format=rgba,colorchannelmixer=aa=0.9[logo_compliance]`,
       )
-      // Bottom-center, 16px from bottom
       filterParts.push(`[${currentVideo}][logo_compliance]overlay=x=(W-w)/2:y=H-h-16[wm3]`)
       currentVideo = 'wm3'
     }
 
-    // Phase 5: Audio — voice + ducked music
-    const dStr = D.toFixed(3)
+    // Phase 5: Audio — voice fills its natural length, music / silence fills to finalDuration.
+    // Voice is trimmed to its actual TTS length; after it ends, music continues solo (or silence
+    // pads to finalDuration when there is no music). This lets Runway clips play their full 5 s.
+    const vStr = voiceDuration.toFixed(3)  // TTS audio length
+    const fStr = finalDuration.toFixed(3)  // total video length
     if (musicIdx !== null) {
-      filterParts.push(`[${voiceIdx}:a]atrim=0:${dStr},asetpts=PTS-STARTPTS[voice]`)
+      // Pad voice with silence to finalDuration so amix doesn't end early on the shorter input.
+      filterParts.push(
+        `[${voiceIdx}:a]atrim=0:${vStr},asetpts=PTS-STARTPTS,apad=whole_dur=${fStr}[voice]`,
+      )
       filterParts.push(
         `[${musicIdx}:a]volume=0.126,aloop=loop=-1:size=2147483647,` +
-          `atrim=0:${dStr},asetpts=PTS-STARTPTS[music]`,
+          `atrim=0:${fStr},asetpts=PTS-STARTPTS[music]`,
       )
-      filterParts.push(`[voice][music]amix=inputs=2:normalize=0[audio_final]`)
+      filterParts.push(`[voice][music]amix=inputs=2:normalize=0:duration=longest[audio_final]`)
     } else {
-      filterParts.push(`[${voiceIdx}:a]atrim=0:${dStr},asetpts=PTS-STARTPTS[audio_final]`)
+      // No music — pad silence after voice to reach finalDuration
+      filterParts.push(
+        `[${voiceIdx}:a]atrim=0:${vStr},asetpts=PTS-STARTPTS,apad=whole_dur=${fStr}[audio_final]`,
+      )
     }
 
     // Build ffmpeg command
@@ -303,7 +335,9 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
       '-b:a', '192k',
       '-pix_fmt', 'yuv420p',
       '-movflags', '+faststart',
-      '-shortest',
+      // Explicit duration cap — replaces -shortest. Ensures output is exactly finalDuration
+      // even if audio/video streams are fractionally longer due to crossfade math.
+      '-t', fStr,
     ])
 
     cmd = cmd.output(output)
@@ -389,6 +423,7 @@ export class MultiModalRenderProvider implements RenderProvider {
         captionText,
         musicVibe,
         motionHints,
+        targetDurationSeconds,
       } = shortsJob
 
       if (!inputAssetIds || inputAssetIds.length === 0) {
@@ -595,6 +630,7 @@ export class MultiModalRenderProvider implements RenderProvider {
         clipPaths,
         voiceAudio: tmpAudio,
         voiceDuration,
+        targetDurationSeconds,
         musicAudio: tmpMusic,
         srtPath,
         logoPath,
