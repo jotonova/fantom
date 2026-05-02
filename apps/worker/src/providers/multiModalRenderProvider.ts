@@ -233,9 +233,9 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
 
     if (logoPath !== null) {
       const idx = nextInputIdx++
-      // Primary brand: fits within 300×150 bounding box, 90% opacity — top-left
+      // Primary brand: fits within 720×360 bounding box, 90% opacity — top-left dominant
       filterParts.push(
-        `[${idx}:v]scale=300:150:force_original_aspect_ratio=decrease,` +
+        `[${idx}:v]scale=720:360:force_original_aspect_ratio=decrease,` +
           `format=rgba,colorchannelmixer=aa=0.9[logo_primary]`,
       )
       filterParts.push(`[${currentVideo}][logo_primary]overlay=x=32:y=32[wm1]`)
@@ -244,14 +244,13 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
 
     if (coBrandLogoPath !== null) {
       const idx = nextInputIdx++
-      // Co-brand (agent identity): fits within 720×360 bounding box, 90% opacity — bottom-left.
-      // y=H-h-200: bottom edge sits 200px above the frame bottom.
-      // At max h=360: logo top at 1920-360-200=1560, bottom at 1720. Caption zone ~1720-1880 → no collision.
+      // Co-brand (agent identity): fits within 400×200 bounding box, 90% opacity — bottom-left.
+      // y=H-h-280: at max h=200 → top at 1920-200-280=1440, bottom at 1640. Caption zone ~1720 → 80px clearance.
       filterParts.push(
-        `[${idx}:v]scale=720:360:force_original_aspect_ratio=decrease,` +
+        `[${idx}:v]scale=400:200:force_original_aspect_ratio=decrease,` +
           `format=rgba,colorchannelmixer=aa=0.9[logo_cobrand]`,
       )
-      filterParts.push(`[${currentVideo}][logo_cobrand]overlay=x=32:y=H-h-200[wm2]`)
+      filterParts.push(`[${currentVideo}][logo_cobrand]overlay=x=32:y=H-h-280[wm2]`)
       currentVideo = 'wm2'
     }
 

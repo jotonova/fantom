@@ -145,9 +145,9 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
 
   // ── Logo watermarks ───────────────────────────────────────────────────────
   if (logoInputIdx !== null) {
-    // Primary brand: fits within 300×150 bounding box, 90% opacity — top-left
+    // Primary brand: fits within 720×360 bounding box, 90% opacity — top-left dominant
     parts.push(
-      `[${logoInputIdx}:v]scale=300:150:force_original_aspect_ratio=decrease,` +
+      `[${logoInputIdx}:v]scale=720:360:force_original_aspect_ratio=decrease,` +
         `format=rgba,colorchannelmixer=aa=0.9[logo_primary]`,
     )
     parts.push(`[${currentLabel}][logo_primary]overlay=x=32:y=32[wm1]`)
@@ -155,14 +155,13 @@ function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
   }
 
   if (coBrandLogoInputIdx !== null) {
-    // Co-brand (agent identity): fits within 720×360 bounding box, 90% opacity — bottom-left.
-    // y=H-h-200: bottom edge sits 200px above the frame bottom.
-    // At max h=360: logo top at 1920-360-200=1560, bottom at 1720. Caption zone ~1720-1880 → no collision.
+    // Co-brand (agent identity): fits within 400×200 bounding box, 90% opacity — bottom-left.
+    // y=H-h-280: at max h=200 → top at 1920-200-280=1440, bottom at 1640. Caption zone ~1720 → 80px clearance.
     parts.push(
-      `[${coBrandLogoInputIdx}:v]scale=720:360:force_original_aspect_ratio=decrease,` +
+      `[${coBrandLogoInputIdx}:v]scale=400:200:force_original_aspect_ratio=decrease,` +
         `format=rgba,colorchannelmixer=aa=0.9[logo_cobrand]`,
     )
-    parts.push(`[${currentLabel}][logo_cobrand]overlay=x=32:y=H-h-200[wm2]`)
+    parts.push(`[${currentLabel}][logo_cobrand]overlay=x=32:y=H-h-280[wm2]`)
     currentLabel = 'wm2'
   }
 
