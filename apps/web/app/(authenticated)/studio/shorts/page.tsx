@@ -217,7 +217,8 @@ export default function ShortsVPFPage() {
   const [captionText, setCaptionText] = useState('')
   const [suggestedCaptions, setSuggestedCaptions] = useState<string[]>([])
   const [musicVibe, setMusicVibe] = useState('none')
-  const [targetDuration, setTargetDuration] = useState(30)
+  // Duration is derived deterministically — each photo = 4 seconds, no user override.
+  const targetDuration = selectedIds.length * 4
   const [sfxPrompt, setSfxPrompt] = useState('')
   const [motionHints, setMotionHints] = useState<Record<string, string>>({})
 
@@ -942,28 +943,20 @@ export default function ShortsVPFPage() {
         </CardContent>
       </Card>
 
-      {/* ── Step 8: Target Duration ──────────────────────────────────────────── */}
+      {/* ── Step 8: Estimated Duration ───────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">8 — Target Duration</CardTitle>
+          <CardTitle className="text-base">8 — Estimated Duration</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
-          <Label htmlFor="duration">
-            <span className="font-semibold text-fantom-text">{targetDuration}s</span>
-          </Label>
-          <input
-            id="duration"
-            type="range"
-            min={15}
-            max={120}
-            step={5}
-            value={targetDuration}
-            onChange={(e) => setTargetDuration(Number(e.target.value))}
-            className="w-full accent-fantom-blue"
-          />
-          <div className="flex justify-between text-xs text-fantom-text-muted">
-            <span>15s</span><span>120s</span>
-          </div>
+        <CardContent>
+          {selectedIds.length > 0 ? (
+            <p className="text-sm text-fantom-text">
+              <span className="font-semibold">{selectedIds.length} photos × 4s = {targetDuration}s</span>
+              <span className="ml-2 text-fantom-text-muted">({(targetDuration / 60).toFixed(1).replace(/\.0$/, '')} min)</span>
+            </p>
+          ) : (
+            <p className="text-sm text-fantom-text-muted">Select photos in Step 1 to see duration.</p>
+          )}
         </CardContent>
       </Card>
 
