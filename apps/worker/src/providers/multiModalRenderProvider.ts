@@ -304,20 +304,20 @@ function buildComposeCommand(params: ComposeParams): Promise<number | null> {
     // fluent-ffmpeg's whitespace-splitting of outputOptions array elements.
     cmd = cmd.complexFilter(filterParts.join(';'))
     console.log(
-      `[ffmpeg-compose] crf=23 b:v=4000k clips=${M} output_duration=${fStr}s`,
+      `[ffmpeg-compose] crf=20 b:v=5000k clips=${M} output_duration=${fStr}s`,
     )
     cmd = cmd.outputOptions([
       '-map', `[${currentVideo}]`,
       '-map', '[audio_final]',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
-      // Social-media quality: crf=23 + 4000k matches Instagram/YouTube Shorts
-      // recommended bitrate. Platforms transcode anyway; crf=18 + 6000k was
-      // overkill and caused 18+ minute encode times on Render shared CPU.
-      '-crf', '23',
-      '-b:v', '4000k',
-      '-maxrate', '5000k',
-      '-bufsize', '10000k',
+      // Quality: crf=20 + 5000k balances visual fidelity (fine detail in real estate
+      // content) with encode time (~2-4 min for 7 clips). crf=18+6000k was wasteful
+      // (18+ min encodes); crf=23+4000k degraded visible texture on cabinetry/finishes.
+      '-crf', '20',
+      '-b:v', '5000k',
+      '-maxrate', '6250k',
+      '-bufsize', '12500k',
       '-c:a', 'aac',
       '-b:a', '192k',
       '-pix_fmt', 'yuv420p',

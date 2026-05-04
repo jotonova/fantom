@@ -247,7 +247,7 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
     const FFMPEG_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
 
     console.log(
-      `[ffmpeg-compose] crf=23 photos=${photos.length} output_duration=${finalDuration.toFixed(1)}s`,
+      `[ffmpeg-compose] crf=20 photos=${photos.length} output_duration=${finalDuration.toFixed(1)}s`,
     )
 
     // Use ceil + 1s buffer so photo loop has enough frames for all xfades
@@ -277,7 +277,8 @@ function runShortFfmpeg(params: RunShortFfmpegParams): Promise<number | null> {
       '-map', `[${audioLabel}]`,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
-      '-crf', '23',
+      '-crf', '20',
+      '-b:v', '5000k',
       '-c:a', 'aac',
       '-b:a', '192k',
       '-pix_fmt', 'yuv420p',
