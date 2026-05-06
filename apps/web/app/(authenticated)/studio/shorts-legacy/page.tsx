@@ -322,7 +322,7 @@ export default function ShortsCreatePage() {
         body: JSON.stringify({
           vibe,
           brandKitName,
-          photoCount: photos.length,
+          assetCount: photos.length,
           targetDurationSeconds: targetDuration,
           ...(hint.trim() ? { hint: hint.trim() } : {}),
         }),
@@ -355,7 +355,7 @@ export default function ShortsCreatePage() {
       const result = await apiFetch<{ id: string }>('/shorts', {
         method: 'POST',
         body: JSON.stringify({
-          photoAssetIds: photos.map((p) => p.id),
+          assetIds: photos.map((p) => p.id),
           vibe,
           script: script.trim(),
           scriptSource: 'custom',

@@ -34,7 +34,7 @@ interface ShortsJob {
   captionText: string | null
   musicVibe: string | null
   targetDurationSeconds: number
-  photoAssetIds: string[]
+  assetIds: string[]
   outputAssetId: string | null
   outputVideoUrl: string | null
   renderJobId: string | null

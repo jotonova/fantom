@@ -20,7 +20,7 @@ export type ShortVibe = 'excited_reveal' | 'calm_walkthrough' | 'educational_bre
 export interface GenerateShortScriptInput {
   vibe: ShortVibe
   brandKitName: string
-  photoCount: number
+  assetCount: number
   targetDurationSeconds: number
   hint?: string
 }
@@ -62,7 +62,7 @@ function buildPrompt(input: GenerateShortScriptInput): string {
 
   return `You are writing a short-form vertical video voiceover script for a real estate property listing.
 
-The video will be ${input.targetDurationSeconds} seconds long and feature ${input.photoCount} photos in a slideshow format.
+The video will be ${input.targetDurationSeconds} seconds long and feature ${input.assetCount} assets in a slideshow format.
 Vibe: ${input.vibe} — ${vibeDesc}
 STRICT word count limit: ${approxWords} words maximum. Stay UNDER this number. The voiceover MUST fit within ${input.targetDurationSeconds} seconds. Fewer words is fine — more is unacceptable.
 Brand tone reference (do NOT name this brand in the script): ${input.brandKitName}
@@ -81,7 +81,7 @@ MOTION DIRECTION
 
 This video is 9:16 vertical (1080×1920). The source photos are landscape orientation. Pans reveal more of each photo than zooms — favor pans.
 
-Generate one motion hint per photo (count: ${input.photoCount}). Each hint is a Runway image_to_video promptText, 1–2 sentences.
+Generate one motion hint per asset (count: ${input.assetCount}). Each hint is a Runway image_to_video promptText, 1–2 sentences.
 
 Frame each prompt as a concrete physical instruction with a duration. Each clip is 5 seconds. Use this template:
   "Pan the camera [direction] across the entire scene over 5 seconds, smooth and steady, [specific visual element being revealed]."

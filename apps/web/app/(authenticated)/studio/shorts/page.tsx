@@ -278,7 +278,7 @@ export default function ShortsVPFPage() {
           body: JSON.stringify({
             vibe,
             brandKitName: kit.name,
-            photoCount: selectedIds.length,
+            assetCount: selectedIds.length,
             targetDurationSeconds: targetDuration,
           }),
         },
@@ -316,7 +316,7 @@ export default function ShortsVPFPage() {
           body: JSON.stringify({
             vibe,
             brandKitName: kit.name,
-            photoCount: selectedIds.length || 1,
+            assetCount: selectedIds.length || 1,
             targetDurationSeconds: targetDuration,
           }),
         },
@@ -357,7 +357,7 @@ export default function ShortsVPFPage() {
       const draft = await apiFetch<{ id: string }>('/shorts', {
         method: 'POST',
         body: JSON.stringify({
-          photoAssetIds: selectedIds,
+          assetIds: selectedIds,
           vibe,
           script: script.trim(),
           scriptSource: scriptMode === 'ai' ? 'ai_generated' : 'custom',

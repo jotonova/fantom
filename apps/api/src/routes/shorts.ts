@@ -74,12 +74,12 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     Body: {
       vibe: string
       brandKitName: string
-      photoCount: number
+      assetCount: number
       targetDurationSeconds: number
       hint?: string
     }
   }>('/shorts/generate-script', { preHandler: requireAuth }, async (request, reply) => {
-    const { vibe, brandKitName, photoCount, targetDurationSeconds, hint } = request.body ?? {}
+    const { vibe, brandKitName, assetCount, targetDurationSeconds, hint } = request.body ?? {}
 
     if (!VALID_VIBES.has(vibe)) {
       return reply.code(400).send({ error: 'vibe must be excited_reveal, calm_walkthrough, or educational_breakdown' })
@@ -87,18 +87,18 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     if (typeof brandKitName !== 'string' || !brandKitName.trim()) {
       return reply.code(400).send({ error: 'brandKitName is required' })
     }
-    if (typeof photoCount !== 'number' || photoCount < 1 || photoCount > 30) {
-      return reply.code(400).send({ error: 'photoCount must be 1–30' })
+    if (typeof assetCount !== 'number' || assetCount < 1 || assetCount > 30) {
+      return reply.code(400).send({ error: 'assetCount must be 1–30' })
     }
-    if (typeof targetDurationSeconds !== 'number' || targetDurationSeconds !== photoCount * 4) {
-      return reply.code(400).send({ error: `targetDurationSeconds must be photoCount × 4 (expected ${photoCount * 4})` })
+    if (typeof targetDurationSeconds !== 'number' || targetDurationSeconds !== assetCount * 4) {
+      return reply.code(400).send({ error: `targetDurationSeconds must be assetCount × 4 (expected ${assetCount * 4})` })
     }
 
     try {
       const scriptInput = {
         vibe: vibe as 'excited_reveal' | 'calm_walkthrough' | 'educational_breakdown',
         brandKitName: brandKitName.trim(),
-        photoCount,
+        assetCount,
         targetDurationSeconds,
         ...(typeof hint === 'string' && hint.trim() ? { hint: hint.trim() } : {}),
       }
@@ -113,7 +113,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /shorts ────────────────────────────────────────────────────────────────
   fastify.post<{
     Body: {
-      photoAssetIds: string[]
+      assetIds: string[]
       vibe?: string
       script?: string
       scriptSource?: string
@@ -131,7 +131,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   }>('/shorts', { preHandler: requireAuth }, async (request, reply) => {
     const {
-      photoAssetIds,
+      assetIds,
       vibe = 'calm_walkthrough',
       script,
       scriptSource = 'ai_generated',
@@ -147,11 +147,11 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       sfxPrompt,
     } = request.body ?? {}
 
-    if (!Array.isArray(photoAssetIds) || photoAssetIds.length === 0) {
-      return reply.code(400).send({ error: 'photoAssetIds must be a non-empty array' })
+    if (!Array.isArray(assetIds) || assetIds.length === 0) {
+      return reply.code(400).send({ error: 'assetIds must be a non-empty array' })
     }
-    if (photoAssetIds.length > 30) {
-      return reply.code(400).send({ error: 'Maximum 30 photos per short' })
+    if (assetIds.length > 30) {
+      return reply.code(400).send({ error: 'Maximum 30 assets per short' })
     }
     if (!VALID_VIBES.has(vibe)) {
       return reply.code(400).send({ error: 'Invalid vibe' })
@@ -159,7 +159,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     if (musicVibe && !VALID_MUSIC_VIBES.has(musicVibe)) {
       return reply.code(400).send({ error: 'Invalid musicVibe' })
     }
-    const expectedDuration = photoAssetIds.length * 4
+    const expectedDuration = assetIds.length * 4
     if (targetDurationSeconds !== expectedDuration) {
       return reply.code(400).send({
         error: `targetDurationSeconds must be 4× the number of input assets (expected ${expectedDuration})`,
@@ -179,7 +179,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
         .values({
           tenantId,
           createdByUserId: userId,
-          inputAssetIds: photoAssetIds,
+          inputAssetIds: assetIds,
           vibe: vibe as ShortsJob['vibe'],
           script: typeof script === 'string' ? script : null,
           scriptSource: (scriptSource as ShortsJob['scriptSource']) ?? 'ai_generated',
@@ -208,7 +208,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       actorUserId: userId,
       subjectType: 'shorts_job',
       subjectId: shortsJob.id,
-      metadata: { vibe, photoCount: photoAssetIds.length },
+      metadata: { vibe, assetCount: assetIds.length },
     })
 
     return reply.code(201).send(await withOutputUrl(shortsJob, tenantId))
@@ -291,7 +291,7 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
       musicVibe?: string | null
       targetDurationSeconds?: number
       vibe?: string
-      photoAssetIds?: string[]
+      assetIds?: string[]
       /** Per-asset motion hints: { [assetId]: "zoom in slowly" } */
       motionHints?: Record<string, string> | null
       sfxPrompt?: string | null
@@ -331,8 +331,8 @@ const shortsRoutes: FastifyPluginAsync = async (fastify) => {
     if (typeof body.vibe === 'string' && VALID_VIBES.has(body.vibe)) {
       patch.vibe = body.vibe as ShortsJob['vibe']
     }
-    if (Array.isArray(body.photoAssetIds) && body.photoAssetIds.length > 0) {
-      patch.inputAssetIds = body.photoAssetIds
+    if (Array.isArray(body.assetIds) && body.assetIds.length > 0) {
+      patch.inputAssetIds = body.assetIds
     }
     if ('motionHints' in body) patch.motionHints = body.motionHints ?? null
     if ('sfxPrompt' in body) patch.sfxPrompt = body.sfxPrompt ?? null

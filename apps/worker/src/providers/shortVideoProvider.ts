@@ -68,7 +68,7 @@ function toMusicVibe(v: string | null | undefined): MusicVibe {
 // ── Filter complex builder ────────────────────────────────────────────────────
 
 interface FilterComplexParams {
-  photoCount: number
+  assetCount: number
   voiceInputIdx: number
   musicInputIdx: number | null
   logoInputIdx: number | null
@@ -89,7 +89,7 @@ interface FilterComplexResult {
 
 function buildFilterComplex(params: FilterComplexParams): FilterComplexResult {
   const {
-    photoCount: N,
+    assetCount: N,
     voiceInputIdx,
     musicInputIdx,
     logoInputIdx,
@@ -507,7 +507,7 @@ export class ShortVideoProvider implements RenderProvider {
       const complianceLogoInputIdx = tmpComplianceLogo !== null ? nextIdx++ : null
 
       const { filterStr, videoLabel, audioLabel } = buildFilterComplex({
-        photoCount: N,
+        assetCount: N,
         voiceInputIdx,
         musicInputIdx,
         logoInputIdx,
