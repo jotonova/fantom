@@ -113,6 +113,27 @@
       "when": 1778000000000,
       "tag": "0015_multimodal_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1778100000000,
+      "tag": "0016_video_preprocessing_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1778100001000,
+      "tag": "0017_add_video_preprocess_job_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1778100002000,
+      "tag": "0018_assemblyai_cost_tracking",
+      "breakpoints": true
     }
   ]
 }

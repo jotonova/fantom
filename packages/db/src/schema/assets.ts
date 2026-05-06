@@ -41,6 +41,21 @@ export const assets = pgTable(
     durationSeconds: numeric('duration_seconds'),
     metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
     tags: text('tags').array().default([]).notNull(),
+    // ── Video preprocessing fields (all nullable — image/audio assets unaffected)
+    codec: text('codec'),
+    fps: numeric('fps'),
+    bitrateKbps: integer('bitrate_kbps'),
+    audioChannels: integer('audio_channels'),
+    transcriptionStatus: text('transcription_status').$type<
+      'pending' | 'processing' | 'complete' | 'failed'
+    >(),
+    transcriptText: text('transcript_text'),
+    transcriptWordTimestamps: jsonb('transcript_word_timestamps').$type<unknown[]>(),
+    sceneCount: integer('scene_count'),
+    sceneBoundaries: jsonb('scene_boundaries').$type<number[]>(),
+    thumbnailR2Key: text('thumbnail_r2_key'),
+    preprocessedAt: timestamp('preprocessed_at', { withTimezone: true }),
+    // ──────────────────────────────────────────────────────────────────────────
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

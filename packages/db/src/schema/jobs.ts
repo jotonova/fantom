@@ -20,6 +20,7 @@ export const jobKindEnum = pgEnum('job_kind', [
   'render_flip_video',
   'render_youtube_edit',
   'render_short_video',
+  'video_preprocess',
 ])
 
 export const jobStatusEnum = pgEnum('job_status', [

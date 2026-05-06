@@ -111,6 +111,7 @@ The seed is idempotent — running it multiple times is safe.
 | API     | `ALERT_TO_EMAIL`         | Alert recipient (e.g. `novacor.icaz@gmail.com`)                  |
 | API     | `FANTOM_DAILY_ALERT_LIMIT` | Max alert emails/day (default: `50`)                           |
 | Worker  | `PORT_HEALTH`            | Health server port (default: `9999`)                             |
+| Worker  | `ASSEMBLYAI_API_KEY`     | AssemblyAI → Account → API Keys (required for video transcription) |
 | Web     | `NEXT_PUBLIC_API_URL`    | Render API service URL                                          |
 
 ---
@@ -265,6 +266,7 @@ Copy all environment variables from `fantom-api`. The worker needs the same set:
 | `ALERT_FROM_EMAIL`     | Same as fantom-api                              |
 | `ALERT_TO_EMAIL`       | Same as fantom-api                              |
 | `PORT_HEALTH`          | `9999` (worker health server — F9)              |
+| `ASSEMBLYAI_API_KEY`   | AssemblyAI → Account → API Keys                 |
 
 > **Tip:** In Render's UI you can use **"Copy from another service"** (Settings → Environment → Sync environment variables from...) to copy all vars from `fantom-api` in one step.
 

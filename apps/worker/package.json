@@ -10,13 +10,14 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "smoke:cost-cap": "tsx scripts/smoke-test-cost-cap.ts"
   },
   "dependencies": {
     "@fantom/ai-scripts": "workspace:*",
     "@fantom/db": "workspace:*",
-    "@fantom/jobs": "workspace:*",
     "@fantom/distribution-bus": "workspace:*",
+    "@fantom/jobs": "workspace:*",
     "@fantom/music": "workspace:*",
     "@fantom/observability": "workspace:*",
     "@fantom/render-bus": "workspace:*",
@@ -24,12 +25,13 @@
     "@fantom/storage": "workspace:*",
     "@fantom/video-editor": "workspace:*",
     "@fantom/voice": "workspace:*",
+    "assemblyai": "^4.32.1",
     "bullmq": "^5.0.0",
     "dotenv": "^16.4.0",
-    "ioredis": "^5.0.0",
     "drizzle-orm": "^0.38.0",
     "ffmpeg-static": "^5.2.0",
-    "fluent-ffmpeg": "^2.1.3"
+    "fluent-ffmpeg": "^2.1.3",
+    "ioredis": "^5.0.0"
   },
   "devDependencies": {
     "@types/fluent-ffmpeg": "^2.1.27",
