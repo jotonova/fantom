@@ -1,9 +1,13 @@
 import { createRequire } from 'node:module'
 import Ffmpeg from 'fluent-ffmpeg'
 
-// ffprobe-static is CJS; use createRequire so NodeNext module resolution finds it
+// ffprobe-static is CJS; use createRequire so NodeNext module resolution finds it.
+// Unlike ffmpeg-static (which exports a bare string path), ffprobe-static exports
+// { path: string } — extract .path before handing it to fluent-ffmpeg.
 const _require = createRequire(import.meta.url)
-const ffprobeBinary = _require('ffprobe-static') as string | null
+const _ffprobeStatic = _require('ffprobe-static') as { path: string } | string | null
+const ffprobeBinary =
+  _ffprobeStatic && typeof _ffprobeStatic === 'object' ? _ffprobeStatic.path : _ffprobeStatic
 if (ffprobeBinary) Ffmpeg.setFfprobePath(ffprobeBinary)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
