@@ -19,10 +19,13 @@ interface VideoAsset {
   sizeBytes: number
   r2Key: string
   publicUrl: string
+  thumbnailPublicUrl: string | null
   width: number | null
   height: number | null
   durationSeconds: string | null
   transcriptionStatus: 'pending' | 'processing' | 'complete' | 'failed' | null
+  codec: string | null
+  preprocessedAt: string | null
   createdAt: string
 }
 
@@ -153,25 +156,37 @@ function VideoDropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
 
 // ── VideoAssetCard ────────────────────────────────────────────────────────────
 
-function VideoAssetCard({ asset, onDelete }: { asset: VideoAsset; onDelete: (id: string) => void }) {
+function VideoAssetCard({
+  asset,
+  onDelete,
+  onReprocess,
+}: {
+  asset: VideoAsset
+  onDelete: (id: string) => void
+  onReprocess: (id: string) => void
+}) {
   const [deleting, setDeleting] = useState(false)
+  const [reprocessing, setReprocessing] = useState(false)
 
   const duration = asset.durationSeconds != null ? Number(asset.durationSeconds) : null
   const resolution =
     asset.width && asset.height ? `${asset.width}×${asset.height}` : null
 
   const statusLabel: Record<NonNullable<VideoAsset['transcriptionStatus']>, string> = {
-    pending: 'Pending preprocessing',
+    pending: 'Preprocessing…',
     processing: 'Preprocessing…',
     complete: 'Ready',
-    failed: 'Preprocessing failed',
+    failed: 'Preprocess failed',
   }
   const statusVariant: Record<NonNullable<VideoAsset['transcriptionStatus']>, 'neutral' | 'warning' | 'success' | 'danger'> = {
-    pending: 'neutral',
+    pending: 'warning',
     processing: 'warning',
     complete: 'success',
     failed: 'danger',
   }
+
+  const isPreprocessing =
+    asset.transcriptionStatus === 'pending' || asset.transcriptionStatus === 'processing'
 
   function handleDelete(e: React.MouseEvent) {
     e.stopPropagation()
@@ -182,15 +197,38 @@ function VideoAssetCard({ asset, onDelete }: { asset: VideoAsset; onDelete: (id:
       .catch(() => setDeleting(false))
   }
 
+  function handleReprocess(e: React.MouseEvent) {
+    e.stopPropagation()
+    setReprocessing(true)
+    apiFetch(`/videos/${asset.id}/reprocess`, { method: 'POST' })
+      .then(() => onReprocess(asset.id))
+      .catch(console.error)
+      .finally(() => setReprocessing(false))
+  }
+
   return (
     <Card className="flex flex-col gap-3 p-3">
-      {/* Placeholder — no thumbnail yet (1A.5) */}
-      <div className="flex h-28 items-center justify-center rounded-[6px] bg-fantom-steel">
-        <svg className="h-8 w-8 text-fantom-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-            d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-        </svg>
-      </div>
+      {/* Thumbnail */}
+      {asset.thumbnailPublicUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={asset.thumbnailPublicUrl}
+          alt={asset.originalFilename}
+          className="h-28 w-full rounded-[6px] object-cover"
+        />
+      ) : (
+        <div className="relative flex h-28 items-center justify-center rounded-[6px] bg-fantom-steel">
+          <svg className="h-8 w-8 text-fantom-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+              d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+          </svg>
+          {isPreprocessing && (
+            <div className="absolute bottom-1.5 right-1.5">
+              <Spinner size="sm" />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Metadata */}
       <div className="min-w-0 flex-1">
@@ -204,6 +242,9 @@ function VideoAssetCard({ asset, onDelete }: { asset: VideoAsset; onDelete: (id:
               {statusLabel[asset.transcriptionStatus]}
             </Badge>
           )}
+          {asset.codec && asset.preprocessedAt && (
+            <Badge variant="neutral">{asset.codec.toUpperCase()}</Badge>
+          )}
           {resolution && <Badge variant="neutral">{resolution}</Badge>}
         </div>
 
@@ -214,10 +255,17 @@ function VideoAssetCard({ asset, onDelete }: { asset: VideoAsset; onDelete: (id:
         </div>
       </div>
 
-      {/* Delete */}
-      <Button size="sm" variant="danger" onClick={handleDelete} disabled={deleting}>
-        {deleting ? <Spinner size="sm" /> : 'Delete'}
-      </Button>
+      {/* Actions */}
+      <div className="flex gap-2">
+        {asset.transcriptionStatus === 'failed' && (
+          <Button size="sm" variant="secondary" onClick={handleReprocess} disabled={reprocessing} className="flex-1">
+            {reprocessing ? <Spinner size="sm" /> : 'Reprocess'}
+          </Button>
+        )}
+        <Button size="sm" variant="danger" onClick={handleDelete} disabled={deleting} className="flex-1">
+          {deleting ? <Spinner size="sm" /> : 'Delete'}
+        </Button>
+      </div>
     </Card>
   )
 }
@@ -269,6 +317,34 @@ export default function VideoLibraryPage() {
   function handleDelete(id: string) {
     setAssetList((prev) => prev.filter((a) => a.id !== id))
   }
+
+  function handleReprocess(id: string) {
+    // Optimistically mark as pending so the spinner appears immediately
+    setAssetList((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, transcriptionStatus: 'pending' } : a)),
+    )
+  }
+
+  // Polling: refresh every 5s while any asset is pending or processing
+  useEffect(() => {
+    const hasInFlight = assetList.some(
+      (a) => a.transcriptionStatus === 'pending' || a.transcriptionStatus === 'processing',
+    )
+    if (!hasInFlight) return
+
+    const timer = setTimeout(async () => {
+      try {
+        const data = await loadVideos()
+        setAssetList(data.assets as VideoAsset[])
+        setNextCursor(data.nextCursor)
+      } catch {
+        // silently ignore poll errors
+      }
+    }, 5_000)
+
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetList])
 
   // ── File probe + queue ──────────────────────────────────────────────────────
 
@@ -565,7 +641,7 @@ export default function VideoLibraryPage() {
         <>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {assetList.map((asset) => (
-              <VideoAssetCard key={asset.id} asset={asset} onDelete={handleDelete} />
+              <VideoAssetCard key={asset.id} asset={asset} onDelete={handleDelete} onReprocess={handleReprocess} />
             ))}
           </div>
           {nextCursor && (

@@ -41,6 +41,20 @@ export async function getAssetRow(assetId: string, tenantId: string): Promise<As
   })
 }
 
+export async function patchAsset(
+  assetId: string,
+  tenantId: string,
+  values: Partial<typeof assets.$inferInsert>,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    await tx
+      .update(assets)
+      .set({ ...values, updatedAt: new Date() })
+      .where(eq(assets.id, assetId))
+  })
+}
+
 export async function createAssetRecord(params: {
   tenantId: string
   kind: 'audio' | 'video'

@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { startHealthServer } from './health.js'
 import { db, pool } from '@fantom/db'
-import { getWorker, getDistributeWorker, enqueueDistribution, JobKind, VOICE_CLONE_TRAIN, SHORT_POST_SCHEDULED } from '@fantom/jobs'
+import { getWorker, getDistributeWorker, enqueueDistribution, JobKind, VOICE_CLONE_TRAIN, SHORT_POST_SCHEDULED, VIDEO_PREPROCESS } from '@fantom/jobs'
 import type { QueuePayload, DistributePayload } from '@fantom/jobs'
 import type { Job as BullJob } from 'bullmq'
 import { sql } from 'drizzle-orm'
@@ -26,6 +26,7 @@ import { InstagramDestination } from './destinations/instagramDestination.js'
 import { MlsDestination } from './destinations/mlsDestination.js'
 import { getPublicUrl, writePublicHealthSentinel } from '@fantom/storage'
 import { dispatchVoiceClone } from './handlers/voiceCloneTrain.js'
+import { runVideoPreprocess } from './providers/videoPreprocessProvider.js'
 import {
   getJobRow,
   patchJob,
@@ -216,6 +217,14 @@ async function dispatchShortPost(bullJob: BullJob<QueuePayload>): Promise<void> 
   }
 }
 
+async function dispatchVideoPreprocess(bullJob: BullJob<QueuePayload>): Promise<void> {
+  const { jobId: assetId, tenantId } = bullJob.data
+  console.log(`fantom-worker: video_preprocess fired for asset ${assetId}`)
+  await runVideoPreprocess(assetId, tenantId, (msg) =>
+    console.log(`[preprocess:${assetId}] ${msg}`),
+  )
+}
+
 async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
   // Voice clone training jobs arrive on the same queue — route them separately.
   if (bullJob.name === VOICE_CLONE_TRAIN) {
@@ -225,6 +234,11 @@ async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
   // Scheduled short post — route separately.
   if (bullJob.name === SHORT_POST_SCHEDULED) {
     return dispatchShortPost(bullJob)
+  }
+
+  // Video preprocess — operates on an existing asset, not a jobs row.
+  if (bullJob.name === VIDEO_PREPROCESS) {
+    return dispatchVideoPreprocess(bullJob)
   }
 
   const { jobId, tenantId } = bullJob.data

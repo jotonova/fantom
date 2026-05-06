@@ -77,6 +77,7 @@ export function getWorker(handler: Processor<QueuePayload>): Worker<QueuePayload
 
 export const VOICE_CLONE_TRAIN = 'voice_clone_train' as const
 export const SHORT_POST_SCHEDULED = 'short_post_scheduled' as const
+export const VIDEO_PREPROCESS = 'video_preprocess' as const
 
 // ── Enqueue render job ────────────────────────────────────────────────────────
 
@@ -136,6 +137,26 @@ export async function enqueueScheduledShortPost(opts: {
     SHORT_POST_SCHEDULED,
     { jobId: opts.shortsJobId, tenantId: opts.tenantId },
     { jobId: `scheduled:${opts.shortsJobId}`, delay: opts.delayMs },
+  )
+}
+
+// ── Enqueue video preprocess ──────────────────────────────────────────────────
+// Uses jobId = assetId so the worker can look up the asset row directly.
+// BullMQ job ID is prefixed to avoid collisions with DB job row UUIDs.
+
+export async function enqueueVideoPreprocess(opts: {
+  assetId: string
+  tenantId: string
+}): Promise<void> {
+  const queue = getQueue()
+  const bullJobId = `preprocess:${opts.assetId}`
+  const existing = await queue.getJob(bullJobId)
+  if (existing) await existing.remove()
+
+  await queue.add(
+    VIDEO_PREPROCESS,
+    { jobId: opts.assetId, tenantId: opts.tenantId },
+    { jobId: bullJobId },
   )
 }
 

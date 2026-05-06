@@ -6,6 +6,7 @@ import { generateUploadUrl, getPublicUrl, getObjectMetadata } from '@fantom/stor
 import { requireAuth } from '../plugins/auth.js'
 import { logEvent } from '@fantom/observability'
 import { VIDEO_UPLOAD_LIMITS } from '@fantom/shared'
+import { enqueueVideoPreprocess } from '@fantom/jobs'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -188,11 +189,39 @@ const videoRoutes: FastifyPluginAsync = async (fastify) => {
       },
     })
 
+    // Best-effort enqueue — never fail the response if Redis is unavailable
+    enqueueVideoPreprocess({ assetId: asset.id, tenantId }).catch((err) => {
+      fastify.log.warn({ err, assetId: asset.id }, 'Failed to enqueue video_preprocess')
+    })
+
     return reply.code(201).send({
       ...asset,
       publicUrl: getPublicUrl(asset.r2Key),
+      thumbnailPublicUrl: null,
     })
   })
+  // POST /videos/:id/reprocess ─────────────────────────────────────────────────
+  fastify.post<{ Params: { id: string } }>(
+    '/videos/:id/reprocess',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { id } = request.params
+      const tenantId = request.tenantId!
+
+      const asset = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        const [row] = await tx.select().from(assets).where(eq(assets.id, id)).limit(1)
+        return row
+      })
+
+      if (!asset) return reply.code(404).send({ error: 'Asset not found' })
+      if (asset.kind !== 'video') return reply.code(400).send({ error: 'Asset is not a video' })
+
+      await enqueueVideoPreprocess({ assetId: id, tenantId })
+
+      return reply.code(202).send({ queued: true })
+    },
+  )
 }
 
 export default fp(videoRoutes, {
