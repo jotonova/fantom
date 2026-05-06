@@ -149,7 +149,8 @@ export async function enqueueVideoPreprocess(opts: {
   tenantId: string
 }): Promise<void> {
   const queue = getQueue()
-  const bullJobId = `preprocess:${opts.assetId}`
+  // BullMQ 5.x forbids ':' in custom job IDs (used as Redis key separator)
+  const bullJobId = `preprocess-${opts.assetId}`
   const existing = await queue.getJob(bullJobId)
   if (existing) await existing.remove()
 

@@ -256,13 +256,23 @@ function VideoAssetCard({
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2">
-        {asset.transcriptionStatus === 'failed' && (
-          <Button size="sm" variant="secondary" onClick={handleReprocess} disabled={reprocessing} className="flex-1">
+      <div className="flex flex-col gap-1.5">
+        {/* Reprocess: prominent for 'failed', subtle escape hatch for stuck pending/processing */}
+        {asset.transcriptionStatus === 'failed' && !asset.preprocessedAt && (
+          <Button size="sm" variant="secondary" onClick={handleReprocess} disabled={reprocessing} className="w-full">
             {reprocessing ? <Spinner size="sm" /> : 'Reprocess'}
           </Button>
         )}
-        <Button size="sm" variant="danger" onClick={handleDelete} disabled={deleting} className="flex-1">
+        {(asset.transcriptionStatus === 'pending' || asset.transcriptionStatus === 'processing') && !asset.preprocessedAt && (
+          <button
+            onClick={handleReprocess}
+            disabled={reprocessing}
+            className="text-center text-xs text-fantom-text-muted hover:text-fantom-text disabled:opacity-50"
+          >
+            {reprocessing ? 'Queuing…' : 'Force reprocess'}
+          </button>
+        )}
+        <Button size="sm" variant="danger" onClick={handleDelete} disabled={deleting} className="w-full">
           {deleting ? <Spinner size="sm" /> : 'Delete'}
         </Button>
       </div>
