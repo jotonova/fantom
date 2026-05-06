@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useAuth } from '../../src/lib/auth-store'
+import { featureFlags } from '../../src/lib/featureFlags'
 import { Logo } from '@fantom/ui'
 import { Avatar } from '@fantom/ui'
 import { Spinner } from '@fantom/ui'
@@ -17,7 +18,8 @@ import {
 
 const NAV_ITEMS = [
   { label: 'Dashboard', href: '/dashboard' },
-  { label: 'Library', href: '/library' },
+  { label: 'Video Library', href: '/library/videos' },
+  { label: 'Library', href: '/library', enabled: featureFlags.photoPathVisible },
   { label: 'Brand Kits', href: '/brand-kits' },
   { label: 'Voices', href: '/voices' },
   { label: 'Jobs', href: '/jobs' },
@@ -80,7 +82,7 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
 
         {/* Nav */}
         <nav className="flex-1 space-y-0.5 px-2 py-2" aria-label="Main navigation">
-          {NAV_ITEMS.map((item) => {
+          {NAV_ITEMS.filter((item) => item.enabled !== false).map((item) => {
             const active = pathname === item.href || pathname.startsWith(item.href + '/')
             return (
               <a

@@ -10,11 +10,12 @@ Fantom uses Vercel for the frontend and Render for the backend, database, and Re
 2. In the [Vercel dashboard](https://vercel.com), click **Add New Project** and import the repo.
 3. Set the **Root Directory** to `apps/web`.
 4. Vercel auto-detects Next.js — no build command override needed.
-5. Add the following environment variable under **Settings → Environment Variables**:
+5. Add the following environment variables under **Settings → Environment Variables**:
 
-   | Key                    | Value                                       |
-   |------------------------|---------------------------------------------|
-   | `NEXT_PUBLIC_API_URL`  | `https://<your-render-api-service>.onrender.com` |
+   | Key                                  | Value                                                      |
+   |--------------------------------------|------------------------------------------------------------|
+   | `NEXT_PUBLIC_API_URL`                | `https://<your-render-api-service>.onrender.com`           |
+   | `NEXT_PUBLIC_PHOTO_PATH_VISIBLE`     | `false` — set to `true` only to debug the legacy photo path |
 
 6. Deploy. Vercel handles preview deployments for every PR automatically.
 
@@ -112,7 +113,8 @@ The seed is idempotent — running it multiple times is safe.
 | API     | `FANTOM_DAILY_ALERT_LIMIT` | Max alert emails/day (default: `50`)                           |
 | Worker  | `PORT_HEALTH`            | Health server port (default: `9999`)                             |
 | Worker  | `ASSEMBLYAI_API_KEY`     | AssemblyAI → Account → API Keys (required for video transcription) |
-| Web     | `NEXT_PUBLIC_API_URL`    | Render API service URL                                          |
+| Web     | `NEXT_PUBLIC_API_URL`              | Render API service URL                                                       |
+| Web     | `NEXT_PUBLIC_PHOTO_PATH_VISIBLE`   | `false` (default). Set `true` to re-enable legacy /library photo path in nav |
 
 ---
 
