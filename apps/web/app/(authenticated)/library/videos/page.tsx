@@ -25,6 +25,7 @@ interface VideoAsset {
   durationSeconds: string | null
   transcriptionStatus: 'pending' | 'processing' | 'complete' | 'failed' | null
   codec: string | null
+  sceneCount: number | null
   preprocessedAt: string | null
   createdAt: string
 }
@@ -244,6 +245,11 @@ function VideoAssetCard({
           )}
           {asset.codec && asset.preprocessedAt && (
             <Badge variant="neutral">{asset.codec.toUpperCase()}</Badge>
+          )}
+          {asset.sceneCount != null && asset.preprocessedAt && (
+            <Badge variant="neutral">
+              {asset.sceneCount === 1 ? '1 scene' : `${asset.sceneCount} scenes`}
+            </Badge>
           )}
           {resolution && <Badge variant="neutral">{resolution}</Badge>}
         </div>

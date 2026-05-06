@@ -6,6 +6,7 @@ import { getObjectToFile, putObjectFromFile } from '@fantom/storage'
 import { logEvent } from '@fantom/observability'
 import { probeVideo } from '../lib/videoProbe.js'
 import { generateThumbnail } from '../lib/videoThumbnail.js'
+import { detectScenes } from '../lib/sceneDetect.js'
 import { getAssetRow, patchAsset, getTenantSlug } from '../lib/db.js'
 
 // ── runVideoPreprocess ────────────────────────────────────────────────────────
@@ -20,14 +21,15 @@ import { getAssetRow, patchAsset, getTenantSlug } from '../lib/db.js'
  *   4. ffprobe: extract codec, fps, bitrate, dimensions, audio channels
  *   5. ffmpeg: extract 1-frame JPEG thumbnail at 10% mark, 1280px wide
  *   6. Upload thumbnail to R2: ${tenantSlug}/thumbnails/${assetId}.jpg
- *   7. Patch asset: codec, fps, bitrateKbps, audioChannels, thumbnailR2Key,
- *                   preprocessedAt, transcriptionStatus → 'pending' (ready for 1A.7)
- *   8. Log event
- *   9. Cleanup temp files (always)
+ *   7. Scene detection: detect scene boundaries via ffmpeg select+showinfo
+ *   8. Patch asset: codec, fps, bitrateKbps, audioChannels, thumbnailR2Key,
+ *                   sceneCount, sceneBoundaries, preprocessedAt,
+ *                   transcriptionStatus → 'pending' (ready for 1A.7)
+ *   9. Log event
+ *  10. Cleanup temp files (always)
  *
- * Additional preprocessing phases (scene detection 1A.6, transcription 1A.7,
- * normalization 1A.8) will be added as steps after step 5 without touching
- * the surrounding scaffold.
+ * Additional preprocessing phases (transcription 1A.7, normalization 1A.8)
+ * plug in after step 6 without touching the surrounding scaffold.
  */
 export async function runVideoPreprocess(
   assetId: string,
@@ -83,7 +85,32 @@ export async function runVideoPreprocess(
     await putObjectFromFile(thumbnailR2Key, thumbPath, 'image/jpeg')
     log(`thumbnail uploaded → ${thumbnailR2Key}`)
 
-    // ── 7. Patch asset ────────────────────────────────────────────────────────
+    // ── 7. Scene detection ────────────────────────────────────────────────────
+
+    let sceneCount = 1
+    let sceneBoundaries: number[] = [0.0]
+
+    try {
+      log(`detecting scenes`)
+      const scenes = await detectScenes(videoPath, duration)
+      sceneCount = scenes.sceneCount
+      sceneBoundaries = scenes.sceneBoundaries
+      log(`scenes: ${sceneCount} detected`)
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      log(`scene detection failed (non-fatal): ${errMsg}`)
+      logEvent({
+        tenantId,
+        kind: 'video.preprocess.scenes_failed',
+        severity: 'warn',
+        subjectType: 'asset',
+        subjectId: assetId,
+        metadata: { errorMessage: errMsg },
+      })
+      // Fallback already set above — continue
+    }
+
+    // ── 8. Patch asset ────────────────────────────────────────────────────────
 
     await patchAsset(assetId, tenantId, {
       codec: probe.codec,
@@ -91,12 +118,14 @@ export async function runVideoPreprocess(
       bitrateKbps: probe.bitrateKbps,
       audioChannels: probe.audioChannels,
       thumbnailR2Key,
+      sceneCount,
+      sceneBoundaries,
       preprocessedAt: new Date(),
       transcriptionStatus: 'pending', // ready for transcription in 1A.7
     })
-    log(`asset patched with probe results`)
+    log(`asset patched with probe + scene results`)
 
-    // ── 8. Log event ──────────────────────────────────────────────────────────
+    // ── 9. Log event ──────────────────────────────────────────────────────────
 
     logEvent({
       tenantId,
@@ -109,6 +138,7 @@ export async function runVideoPreprocess(
         fps: probe.fps,
         bitrateKbps: probe.bitrateKbps,
         thumbnailR2Key,
+        sceneCount,
       },
     })
 
