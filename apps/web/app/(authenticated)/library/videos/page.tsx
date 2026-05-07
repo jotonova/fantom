@@ -155,6 +155,19 @@ function VideoDropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
   )
 }
 
+// ── Preprocessing predicates ──────────────────────────────────────────────────
+// Derived from actual preprocessing outputs — not transcriptionStatus, which
+// is reserved for the 1A.7 transcription step and will read 'pending' on all
+// preprocessed-but-not-yet-transcribed assets.
+
+function isPreprocessComplete(a: VideoAsset): boolean {
+  return !!a.preprocessedAt && !!a.thumbnailPublicUrl && a.sceneCount != null
+}
+
+function isPreprocessFailed(a: VideoAsset): boolean {
+  return !a.preprocessedAt && a.transcriptionStatus === 'failed'
+}
+
 // ── VideoAssetCard ────────────────────────────────────────────────────────────
 
 function VideoAssetCard({
@@ -173,21 +186,8 @@ function VideoAssetCard({
   const resolution =
     asset.width && asset.height ? `${asset.width}×${asset.height}` : null
 
-  const statusLabel: Record<NonNullable<VideoAsset['transcriptionStatus']>, string> = {
-    pending: 'Preprocessing…',
-    processing: 'Preprocessing…',
-    complete: 'Ready',
-    failed: 'Preprocess failed',
-  }
-  const statusVariant: Record<NonNullable<VideoAsset['transcriptionStatus']>, 'neutral' | 'warning' | 'success' | 'danger'> = {
-    pending: 'warning',
-    processing: 'warning',
-    complete: 'success',
-    failed: 'danger',
-  }
-
-  const isPreprocessing =
-    asset.transcriptionStatus === 'pending' || asset.transcriptionStatus === 'processing'
+  const preprocessComplete = isPreprocessComplete(asset)
+  const preprocessFailed = isPreprocessFailed(asset)
 
   function handleDelete(e: React.MouseEvent) {
     e.stopPropagation()
@@ -223,7 +223,7 @@ function VideoAssetCard({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
               d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
           </svg>
-          {isPreprocessing && (
+          {!preprocessComplete && (
             <div className="absolute bottom-1.5 right-1.5">
               <Spinner size="sm" />
             </div>
@@ -238,18 +238,19 @@ function VideoAssetCard({
         </p>
 
         <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {asset.transcriptionStatus && (
-            <Badge variant={statusVariant[asset.transcriptionStatus]}>
-              {statusLabel[asset.transcriptionStatus]}
-            </Badge>
-          )}
-          {asset.codec && asset.preprocessedAt && (
-            <Badge variant="neutral">{asset.codec.toUpperCase()}</Badge>
-          )}
-          {asset.sceneCount != null && asset.preprocessedAt && (
-            <Badge variant="neutral">
-              {asset.sceneCount === 1 ? '1 scene' : `${asset.sceneCount} scenes`}
-            </Badge>
+          {preprocessComplete ? (
+            <>
+              {asset.codec && <Badge variant="neutral">{asset.codec.toUpperCase()}</Badge>}
+              {asset.sceneCount != null && (
+                <Badge variant="neutral">
+                  {asset.sceneCount === 1 ? '1 scene' : `${asset.sceneCount} scenes`}
+                </Badge>
+              )}
+            </>
+          ) : preprocessFailed ? (
+            <Badge variant="danger">Preprocess failed</Badge>
+          ) : (
+            <Badge variant="warning">Preprocessing…</Badge>
           )}
           {resolution && <Badge variant="neutral">{resolution}</Badge>}
         </div>
@@ -263,20 +264,20 @@ function VideoAssetCard({
 
       {/* Actions */}
       <div className="flex flex-col gap-1.5">
-        {/* Reprocess: prominent for 'failed', subtle escape hatch for stuck pending/processing */}
-        {asset.transcriptionStatus === 'failed' && !asset.preprocessedAt && (
-          <Button size="sm" variant="secondary" onClick={handleReprocess} disabled={reprocessing} className="w-full">
-            {reprocessing ? <Spinner size="sm" /> : 'Reprocess'}
-          </Button>
-        )}
-        {(asset.transcriptionStatus === 'pending' || asset.transcriptionStatus === 'processing') && !asset.preprocessedAt && (
-          <button
-            onClick={handleReprocess}
-            disabled={reprocessing}
-            className="text-center text-xs text-fantom-text-muted hover:text-fantom-text disabled:opacity-50"
-          >
-            {reprocessing ? 'Queuing…' : 'Force reprocess'}
-          </button>
+        {!preprocessComplete && (
+          preprocessFailed ? (
+            <Button size="sm" variant="secondary" onClick={handleReprocess} disabled={reprocessing} className="w-full">
+              {reprocessing ? <Spinner size="sm" /> : 'Reprocess'}
+            </Button>
+          ) : (
+            <button
+              onClick={handleReprocess}
+              disabled={reprocessing}
+              className="text-center text-xs text-fantom-text-muted hover:text-fantom-text disabled:opacity-50"
+            >
+              {reprocessing ? 'Queuing…' : 'Force reprocess'}
+            </button>
+          )
         )}
         <Button size="sm" variant="danger" onClick={handleDelete} disabled={deleting} className="w-full">
           {deleting ? <Spinner size="sm" /> : 'Delete'}
@@ -335,17 +336,15 @@ export default function VideoLibraryPage() {
   }
 
   function handleReprocess(id: string) {
-    // Optimistically mark as pending so the spinner appears immediately
+    // Optimistically clear preprocessedAt so the spinner appears immediately
     setAssetList((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, transcriptionStatus: 'pending' } : a)),
+      prev.map((a) => (a.id === id ? { ...a, preprocessedAt: null } : a)),
     )
   }
 
-  // Polling: refresh every 5s while any asset is pending or processing
+  // Polling: refresh every 5s while any asset is not fully preprocessed
   useEffect(() => {
-    const hasInFlight = assetList.some(
-      (a) => a.transcriptionStatus === 'pending' || a.transcriptionStatus === 'processing',
-    )
+    const hasInFlight = assetList.some((a) => !isPreprocessComplete(a))
     if (!hasInFlight) return
 
     const timer = setTimeout(async () => {
