@@ -2,34 +2,48 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { getObjectToFile, putObjectFromFile } from '@fantom/storage'
+import { getObjectToFile, putObjectFromFile, generateDownloadUrl } from '@fantom/storage'
 import { logEvent } from '@fantom/observability'
 import { probeVideo } from '../lib/videoProbe.js'
 import { generateThumbnail } from '../lib/videoThumbnail.js'
 import { detectScenes } from '../lib/sceneDetect.js'
+import { transcribeFile } from '../lib/assemblyai.js'
+import {
+  estimateTranscriptionCost,
+  checkCanTranscribe,
+  recordUsage,
+  checkSoftCapAlert,
+  getDailySpendUsd,
+  getMonthlySpendUsd,
+} from '../lib/assemblyaiCostCap.js'
 import { getAssetRow, patchAsset, getTenantSlug } from '../lib/db.js'
 
 // ── runVideoPreprocess ────────────────────────────────────────────────────────
 
 /**
- * Phase 1 of video preprocessing: ffprobe metadata extraction + thumbnail.
+ * Full video preprocessing pipeline: ffprobe → thumbnail → scene detection →
+ * AssemblyAI transcription.
  *
  * Flow:
- *   1. Load asset row — validate it's a video in pending/failed state
- *   2. Set transcriptionStatus = 'processing'
- *   3. Download from R2 to temp dir
- *   4. ffprobe: extract codec, fps, bitrate, dimensions, audio channels
- *   5. ffmpeg: extract 1-frame JPEG thumbnail at 10% mark, 1280px wide
- *   6. Upload thumbnail to R2: ${tenantSlug}/thumbnails/${assetId}.jpg
- *   7. Scene detection: detect scene boundaries via ffmpeg select+showinfo
- *   8. Patch asset: codec, fps, bitrateKbps, audioChannels, thumbnailR2Key,
- *                   sceneCount, sceneBoundaries, preprocessedAt,
- *                   transcriptionStatus → 'pending' (ready for 1A.7)
- *   9. Log event
- *  10. Cleanup temp files (always)
- *
- * Additional preprocessing phases (transcription 1A.7, normalization 1A.8)
- * plug in after step 6 without touching the surrounding scaffold.
+ *   1.  Load asset row — validate it's a video in pending/failed state
+ *   2.  Set transcriptionStatus = 'processing'
+ *   3.  Download from R2 to temp dir
+ *   4.  ffprobe: extract codec, fps, bitrate, dimensions, audio channels
+ *   5.  ffmpeg: extract 1-frame JPEG thumbnail at 10% mark, 1280px wide
+ *   6.  Upload thumbnail to R2: ${tenantSlug}/thumbnails/${assetId}.jpg
+ *   7.  Scene detection: detect scene boundaries via ffmpeg select+showinfo
+ *   8.  Patch asset: codec, fps, bitrateKbps, audioChannels, thumbnailR2Key,
+ *                   sceneCount, sceneBoundaries, preprocessedAt
+ *   9.  Estimate transcription cost from durationSeconds
+ *   10. checkCanTranscribe — if blocked, skip with warn event and set
+ *       transcriptionStatus = 'failed'
+ *   11. Generate presigned download URL for AAI (R2 bucket is private)
+ *   12. Set transcriptionStatus = 'processing', call transcribeFile()
+ *   13. recordUsage() + checkSoftCapAlert()
+ *   14. Patch asset: transcriptText, transcriptWordTimestamps,
+ *       transcriptionStatus = 'complete'
+ *   15. Log event
+ *   16. Cleanup temp files (always)
  */
 export async function runVideoPreprocess(
   assetId: string,
@@ -110,22 +124,116 @@ export async function runVideoPreprocess(
       // Fallback already set above — continue
     }
 
-    // ── 8. Patch asset ────────────────────────────────────────────────────────
+    // ── 8. Patch asset with probe + scene results ─────────────────────────────
 
     await patchAsset(assetId, tenantId, {
       codec: probe.codec,
-      fps: String(Math.round(probe.fps * 100) / 100), // round to 2 decimal places
+      fps: String(Math.round(probe.fps * 100) / 100),
       bitrateKbps: probe.bitrateKbps,
       audioChannels: probe.audioChannels,
       thumbnailR2Key,
       sceneCount,
       sceneBoundaries,
       preprocessedAt: new Date(),
-      transcriptionStatus: 'pending', // ready for transcription in 1A.7
+      // transcriptionStatus stays 'processing' until transcription completes
     })
     log(`asset patched with probe + scene results`)
 
-    // ── 9. Log event ──────────────────────────────────────────────────────────
+    // ── 9. Estimate transcription cost ────────────────────────────────────────
+
+    const estimatedCost = estimateTranscriptionCost(duration)
+    log(`transcription estimate: $${estimatedCost.toFixed(5)} for ${duration.toFixed(1)}s`)
+
+    // ── 10. Cost cap check ────────────────────────────────────────────────────
+
+    const capCheck = await checkCanTranscribe(tenantId, estimatedCost)
+
+    if (!capCheck.allowed) {
+      log(`transcription skipped (cap): ${capCheck.reason}`)
+      logEvent({
+        tenantId,
+        kind: 'video.preprocess.transcription_skipped',
+        severity: 'warn',
+        subjectType: 'asset',
+        subjectId: assetId,
+        metadata: {
+          reason: capCheck.reason,
+          capHit: capCheck.capHit,
+          dailySpend: capCheck.dailySpend,
+          monthlySpend: capCheck.monthlySpend,
+          estimatedCost,
+        },
+      })
+      // Mark failed so the UI shows "Transcript failed" and force-reprocess is available
+      await patchAsset(assetId, tenantId, { transcriptionStatus: 'failed' })
+      log(`preprocess complete (transcription skipped due to cost cap)`)
+      return
+    }
+
+    // ── 11. Presigned URL for AssemblyAI (R2 bucket is private) ──────────────
+
+    // Use a 1-hour presigned GET URL — AAI must be able to fetch the video
+    const presignedUrl = await generateDownloadUrl(asset.r2Key, 3600)
+    log(`presigned download URL generated (1hr expiry)`)
+
+    // ── 12. Transcribe ────────────────────────────────────────────────────────
+
+    let transcriptText: string | null = null
+    let transcriptWords: TranscriptionWord[] | null = null
+    let transcriptionFailed = false
+
+    try {
+      const result = await transcribeFile(presignedUrl, log)
+
+      transcriptText = result.text
+      transcriptWords = result.words
+
+      // ── 13. Record usage + soft cap alert ─────────────────────────────────
+
+      await recordUsage(tenantId, assetId, result.audioDurationSeconds, result.transcriptId)
+      log(`usage recorded: ${result.audioDurationSeconds.toFixed(1)}s audio`)
+
+      const justCrossedSoftCap = await checkSoftCapAlert(tenantId)
+      if (justCrossedSoftCap) {
+        const [dailySpend, monthlySpend] = await Promise.all([
+          getDailySpendUsd(tenantId),
+          getMonthlySpendUsd(tenantId),
+        ])
+        logEvent({
+          tenantId,
+          kind: 'cost_cap.assemblyai_soft_cap_crossed',
+          severity: 'warn',
+          subjectType: 'asset',
+          subjectId: assetId,
+          metadata: { dailySpend, monthlySpend },
+        })
+        log(`soft cap crossed — in-app alert logged`)
+      }
+    } catch (err) {
+      transcriptionFailed = true
+      const errMsg = err instanceof Error ? err.message : String(err)
+      log(`transcription failed (non-fatal): ${errMsg}`)
+      logEvent({
+        tenantId,
+        kind: 'video.preprocess.transcription_failed',
+        severity: 'error',
+        subjectType: 'asset',
+        subjectId: assetId,
+        errorMessage: errMsg,
+        errorStack: err instanceof Error ? (err.stack ?? null) : null,
+      })
+    }
+
+    // ── 14. Patch asset with transcription result ─────────────────────────────
+
+    await patchAsset(assetId, tenantId, {
+      transcriptText: transcriptText ?? null,
+      transcriptWordTimestamps: transcriptWords ?? null,
+      transcriptionStatus: transcriptionFailed ? 'failed' : 'complete',
+    })
+    log(`transcription status → ${transcriptionFailed ? 'failed' : 'complete'}`)
+
+    // ── 15. Log event ──────────────────────────────────────────────────────────
 
     logEvent({
       tenantId,
@@ -139,6 +247,7 @@ export async function runVideoPreprocess(
         bitrateKbps: probe.bitrateKbps,
         thumbnailR2Key,
         sceneCount,
+        transcriptionComplete: !transcriptionFailed,
       },
     })
 
@@ -163,10 +272,19 @@ export async function runVideoPreprocess(
 
     throw err
   } finally {
-    // ── 9. Cleanup ────────────────────────────────────────────────────────────
+    // ── 16. Cleanup ───────────────────────────────────────────────────────────
     await fs.rm(workDir, { recursive: true, force: true }).catch((e) => {
       console.error(`[preprocess:${assetId}] cleanup failed:`, e)
     })
     log(`temp files cleaned up`)
   }
+}
+
+// ── Internal types ────────────────────────────────────────────────────────────
+
+interface TranscriptionWord {
+  text: string
+  start: number
+  end: number
+  confidence: number
 }

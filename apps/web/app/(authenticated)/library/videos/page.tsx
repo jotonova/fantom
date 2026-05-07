@@ -24,6 +24,7 @@ interface VideoAsset {
   height: number | null
   durationSeconds: string | null
   transcriptionStatus: 'pending' | 'processing' | 'complete' | 'failed' | null
+  transcriptText: string | null
   codec: string | null
   sceneCount: number | null
   preprocessedAt: string | null
@@ -161,7 +162,12 @@ function VideoDropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
 // preprocessed-but-not-yet-transcribed assets.
 
 function isPreprocessComplete(a: VideoAsset): boolean {
-  return !!a.preprocessedAt && !!a.thumbnailPublicUrl && a.sceneCount != null
+  return (
+    !!a.preprocessedAt &&
+    !!a.thumbnailPublicUrl &&
+    a.sceneCount != null &&
+    (a.transcriptionStatus === 'complete' || a.transcriptionStatus === 'failed')
+  )
 }
 
 function isPreprocessFailed(a: VideoAsset): boolean {
@@ -246,9 +252,26 @@ function VideoAssetCard({
                   {asset.sceneCount === 1 ? '1 scene' : `${asset.sceneCount} scenes`}
                 </Badge>
               )}
+              {asset.transcriptionStatus === 'complete' && asset.transcriptText ? (
+                <Badge variant="success">Transcript ✓</Badge>
+              ) : asset.transcriptionStatus === 'failed' ? (
+                <Badge variant="danger">Transcript failed</Badge>
+              ) : asset.transcriptionStatus === 'pending' ? (
+                <Badge variant="neutral">Transcript queued</Badge>
+              ) : null}
             </>
           ) : preprocessFailed ? (
             <Badge variant="danger">Preprocess failed</Badge>
+          ) : asset.transcriptionStatus === 'processing' && asset.preprocessedAt ? (
+            <>
+              {asset.codec && <Badge variant="neutral">{asset.codec.toUpperCase()}</Badge>}
+              {asset.sceneCount != null && (
+                <Badge variant="neutral">
+                  {asset.sceneCount === 1 ? '1 scene' : `${asset.sceneCount} scenes`}
+                </Badge>
+              )}
+              <Badge variant="warning">Transcribing…</Badge>
+            </>
           ) : (
             <Badge variant="warning">Preprocessing…</Badge>
           )}
