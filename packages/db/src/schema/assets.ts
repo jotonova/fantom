@@ -61,6 +61,8 @@ export const assets = pgTable(
     normalizedSizeBytes: bigint('normalized_size_bytes', { mode: 'number' }),
     normalizedCodec: text('normalized_codec'),
     normalizedAudioCodec: text('normalized_audio_codec'),
+    normalizedWidth: integer('normalized_width'),
+    normalizedHeight: integer('normalized_height'),
     loudnessLufs: numeric('loudness_lufs'),
     loudnessTruePeakDb: numeric('loudness_truepeak_db'),
     // ──────────────────────────────────────────────────────────────────────────

@@ -228,12 +228,16 @@ export async function runVideoPreprocess(
     let loudnessTruePeakDb: number | null = null
     let normalizedCodec: string | null = null
     let normalizedAudioCodec: string | null = null
+    let normalizedWidth: number | null = null
+    let normalizedHeight: number | null = null
 
     try {
-      const normResult = await normalizeVideo(videoPath, normalizedPath, hasAudio, log)
+      const normResult = await normalizeVideo(videoPath, normalizedPath, hasAudio, probe.width, probe.height, log)
       normalizedSizeBytes = normResult.sizeBytes
       normalizedCodec = normResult.videoCodec
       normalizedAudioCodec = normResult.audioCodec
+      normalizedWidth = normResult.width
+      normalizedHeight = normResult.height
 
       // ── 14. Measure loudness on normalized output ─────────────────────────
 
@@ -275,6 +279,8 @@ export async function runVideoPreprocess(
       normalizedSizeBytes: normalizedSizeBytes ?? undefined,
       normalizedCodec: normalizedCodec ?? undefined,
       normalizedAudioCodec: normalizedAudioCodec ?? undefined,
+      normalizedWidth: normalizedWidth ?? undefined,
+      normalizedHeight: normalizedHeight ?? undefined,
       loudnessLufs: loudnessLufs != null ? String(loudnessLufs) : undefined,
       loudnessTruePeakDb: loudnessTruePeakDb != null ? String(loudnessTruePeakDb) : undefined,
     })
