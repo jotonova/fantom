@@ -28,6 +28,8 @@ interface VideoAsset {
   codec: string | null
   sceneCount: number | null
   preprocessedAt: string | null
+  normalizedR2Key: string | null
+  loudnessLufs: string | null
   createdAt: string
 }
 
@@ -258,6 +260,13 @@ function VideoAssetCard({
                 <Badge variant="danger">Transcript failed</Badge>
               ) : asset.transcriptionStatus === 'pending' ? (
                 <Badge variant="neutral">Transcript queued</Badge>
+              ) : null}
+              {asset.normalizedR2Key ? (
+                <Badge variant="success" title={asset.loudnessLufs ? `Normalized • ${parseFloat(asset.loudnessLufs).toFixed(1)} LUFS` : 'Normalized'}>
+                  Normalized ✓
+                </Badge>
+              ) : asset.preprocessedAt ? (
+                <Badge variant="neutral">Normalize skipped</Badge>
               ) : null}
             </>
           ) : preprocessFailed ? (

@@ -10,6 +10,7 @@ import {
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core'
+
 import { tenants } from './tenants.js'
 import { users } from './users.js'
 
@@ -55,6 +56,13 @@ export const assets = pgTable(
     sceneBoundaries: jsonb('scene_boundaries').$type<number[]>(),
     thumbnailR2Key: text('thumbnail_r2_key'),
     preprocessedAt: timestamp('preprocessed_at', { withTimezone: true }),
+    // ── Normalized derivative fields (1A.8 — all nullable, best-effort)
+    normalizedR2Key: text('normalized_r2_key'),
+    normalizedSizeBytes: bigint('normalized_size_bytes', { mode: 'number' }),
+    normalizedCodec: text('normalized_codec'),
+    normalizedAudioCodec: text('normalized_audio_codec'),
+    loudnessLufs: numeric('loudness_lufs'),
+    loudnessTruePeakDb: numeric('loudness_truepeak_db'),
     // ──────────────────────────────────────────────────────────────────────────
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

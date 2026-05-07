@@ -16,34 +16,28 @@ import {
   getDailySpendUsd,
   getMonthlySpendUsd,
 } from '../lib/assemblyaiCostCap.js'
+import { normalizeVideo } from '../lib/normalizeVideo.js'
+import { measureLoudness } from '../lib/audioNormalize.js'
 import { getAssetRow, patchAsset, getTenantSlug } from '../lib/db.js'
 
 // ── runVideoPreprocess ────────────────────────────────────────────────────────
 
 /**
- * Full video preprocessing pipeline: ffprobe → thumbnail → scene detection →
- * AssemblyAI transcription.
- *
- * Flow:
- *   1.  Load asset row — validate it's a video in pending/failed state
+ * Full video preprocessing pipeline:
+ *   1.  Load asset row
  *   2.  Set transcriptionStatus = 'processing'
  *   3.  Download from R2 to temp dir
- *   4.  ffprobe: extract codec, fps, bitrate, dimensions, audio channels
- *   5.  ffmpeg: extract 1-frame JPEG thumbnail at 10% mark, 1280px wide
- *   6.  Upload thumbnail to R2: ${tenantSlug}/thumbnails/${assetId}.jpg
- *   7.  Scene detection: detect scene boundaries via ffmpeg select+showinfo
- *   8.  Patch asset: codec, fps, bitrateKbps, audioChannels, thumbnailR2Key,
- *                   sceneCount, sceneBoundaries, preprocessedAt
- *   9.  Estimate transcription cost from durationSeconds
- *   10. checkCanTranscribe — if blocked, skip with warn event and set
- *       transcriptionStatus = 'failed'
- *   11. Generate presigned download URL for AAI (R2 bucket is private)
- *   12. Set transcriptionStatus = 'processing', call transcribeFile()
- *   13. recordUsage() + checkSoftCapAlert()
- *   14. Patch asset: transcriptText, transcriptWordTimestamps,
- *       transcriptionStatus = 'complete'
- *   15. Log event
- *   16. Cleanup temp files (always)
+ *   4.  ffprobe: codec, fps, bitrate, dimensions, audio channels
+ *   5.  ffmpeg: thumbnail at 10% mark → upload to R2
+ *   6.  Scene detection (non-fatal)
+ *   7.  Patch asset with probe + scene results, set preprocessedAt
+ *   8.  Cost cap check → transcribe via AssemblyAI (non-fatal)
+ *   9.  Patch asset with transcription result
+ *   10. Normalize video: color correct + audio loudnorm in single pass (non-fatal)
+ *   11. Measure loudness on normalized output
+ *   12. Upload normalized file to R2
+ *   13. Patch asset with normalized fields
+ *   14. Log event + cleanup
  */
 export async function runVideoPreprocess(
   assetId: string,
@@ -72,6 +66,7 @@ export async function runVideoPreprocess(
 
   const videoPath = join(workDir, 'video.bin')
   const thumbPath = join(workDir, 'thumb.jpg')
+  const normalizedPath = join(workDir, 'normalized.mp4')
 
   try {
     // ── 3. Download from R2 ───────────────────────────────────────────────────
@@ -85,6 +80,8 @@ export async function runVideoPreprocess(
     log(`running ffprobe`)
     const probe = await probeVideo(videoPath)
     log(`probe: ${probe.codec} ${probe.width}×${probe.height} ${probe.fps.toFixed(2)}fps ${probe.bitrateKbps}kbps`)
+
+    const hasAudio = probe.audioChannels != null && probe.audioChannels > 0
 
     // ── 5. Thumbnail ──────────────────────────────────────────────────────────
 
@@ -121,7 +118,6 @@ export async function runVideoPreprocess(
         subjectId: assetId,
         metadata: { errorMessage: errMsg },
       })
-      // Fallback already set above — continue
     }
 
     // ── 8. Patch asset with probe + scene results ─────────────────────────────
@@ -135,7 +131,6 @@ export async function runVideoPreprocess(
       sceneCount,
       sceneBoundaries,
       preprocessedAt: new Date(),
-      // transcriptionStatus stays 'processing' until transcription completes
     })
     log(`asset patched with probe + scene results`)
 
@@ -164,76 +159,128 @@ export async function runVideoPreprocess(
           estimatedCost,
         },
       })
-      // Mark failed so the UI shows "Transcript failed" and force-reprocess is available
       await patchAsset(assetId, tenantId, { transcriptionStatus: 'failed' })
-      log(`preprocess complete (transcription skipped due to cost cap)`)
-      return
-    }
+      log(`transcription skipped — continuing to normalization`)
+    } else {
+      // ── 11. Presigned URL for AssemblyAI ─────────────────────────────────────
 
-    // ── 11. Presigned URL for AssemblyAI (R2 bucket is private) ──────────────
+      const presignedUrl = await generateDownloadUrl(asset.r2Key, 3600)
+      log(`presigned download URL generated (1hr expiry)`)
 
-    // Use a 1-hour presigned GET URL — AAI must be able to fetch the video
-    const presignedUrl = await generateDownloadUrl(asset.r2Key, 3600)
-    log(`presigned download URL generated (1hr expiry)`)
+      // ── 12. Transcribe ────────────────────────────────────────────────────────
 
-    // ── 12. Transcribe ────────────────────────────────────────────────────────
+      let transcriptText: string | null = null
+      let transcriptWords: TranscriptionWord[] | null = null
+      let transcriptionFailed = false
 
-    let transcriptText: string | null = null
-    let transcriptWords: TranscriptionWord[] | null = null
-    let transcriptionFailed = false
+      try {
+        const result = await transcribeFile(presignedUrl, log)
+        transcriptText = result.text
+        transcriptWords = result.words
 
-    try {
-      const result = await transcribeFile(presignedUrl, log)
+        await recordUsage(tenantId, assetId, result.audioDurationSeconds, result.transcriptId)
+        log(`usage recorded: ${result.audioDurationSeconds.toFixed(1)}s audio`)
 
-      transcriptText = result.text
-      transcriptWords = result.words
-
-      // ── 13. Record usage + soft cap alert ─────────────────────────────────
-
-      await recordUsage(tenantId, assetId, result.audioDurationSeconds, result.transcriptId)
-      log(`usage recorded: ${result.audioDurationSeconds.toFixed(1)}s audio`)
-
-      const justCrossedSoftCap = await checkSoftCapAlert(tenantId)
-      if (justCrossedSoftCap) {
-        const [dailySpend, monthlySpend] = await Promise.all([
-          getDailySpendUsd(tenantId),
-          getMonthlySpendUsd(tenantId),
-        ])
+        const justCrossedSoftCap = await checkSoftCapAlert(tenantId)
+        if (justCrossedSoftCap) {
+          const [dailySpend, monthlySpend] = await Promise.all([
+            getDailySpendUsd(tenantId),
+            getMonthlySpendUsd(tenantId),
+          ])
+          logEvent({
+            tenantId,
+            kind: 'cost_cap.assemblyai_soft_cap_crossed',
+            severity: 'warn',
+            subjectType: 'asset',
+            subjectId: assetId,
+            metadata: { dailySpend, monthlySpend },
+          })
+          log(`soft cap crossed — in-app alert logged`)
+        }
+      } catch (err) {
+        transcriptionFailed = true
+        const errMsg = err instanceof Error ? err.message : String(err)
+        log(`transcription failed (non-fatal): ${errMsg}`)
         logEvent({
           tenantId,
-          kind: 'cost_cap.assemblyai_soft_cap_crossed',
-          severity: 'warn',
+          kind: 'video.preprocess.transcription_failed',
+          severity: 'error',
           subjectType: 'asset',
           subjectId: assetId,
-          metadata: { dailySpend, monthlySpend },
+          errorMessage: errMsg,
+          errorStack: err instanceof Error ? (err.stack ?? null) : null,
         })
-        log(`soft cap crossed — in-app alert logged`)
       }
-    } catch (err) {
-      transcriptionFailed = true
-      const errMsg = err instanceof Error ? err.message : String(err)
-      log(`transcription failed (non-fatal): ${errMsg}`)
-      logEvent({
-        tenantId,
-        kind: 'video.preprocess.transcription_failed',
-        severity: 'error',
-        subjectType: 'asset',
-        subjectId: assetId,
-        errorMessage: errMsg,
-        errorStack: err instanceof Error ? (err.stack ?? null) : null,
+
+      await patchAsset(assetId, tenantId, {
+        transcriptText: transcriptText ?? null,
+        transcriptWordTimestamps: transcriptWords ?? null,
+        transcriptionStatus: transcriptionFailed ? 'failed' : 'complete',
       })
+      log(`transcription status → ${transcriptionFailed ? 'failed' : 'complete'}`)
     }
 
-    // ── 14. Patch asset with transcription result ─────────────────────────────
+    // ── 13. Normalize video (color correct + audio loudnorm) ──────────────────
+
+    let normalizedR2Key: string | null = null
+    let normalizedSizeBytes: number | null = null
+    let loudnessLufs: number | null = null
+    let loudnessTruePeakDb: number | null = null
+    let normalizedCodec: string | null = null
+    let normalizedAudioCodec: string | null = null
+
+    try {
+      const normResult = await normalizeVideo(videoPath, normalizedPath, hasAudio, log)
+      normalizedSizeBytes = normResult.sizeBytes
+      normalizedCodec = normResult.videoCodec
+      normalizedAudioCodec = normResult.audioCodec
+
+      // ── 14. Measure loudness on normalized output ─────────────────────────
+
+      if (hasAudio) {
+        log(`measuring loudness`)
+        const loudness = await measureLoudness(normalizedPath)
+        if (isFinite(loudness.integratedLufs)) {
+          loudnessLufs = loudness.integratedLufs
+          loudnessTruePeakDb = loudness.truePeakDb
+          log(`loudness: ${loudnessLufs.toFixed(1)} LUFS / ${loudnessTruePeakDb?.toFixed(1)} dBTP`)
+        } else {
+          log(`loudness: silent/no-audio`)
+        }
+      }
+
+      // ── 15. Upload normalized file to R2 ─────────────────────────────────
+
+      normalizedR2Key = `${tenantSlug}/normalized/${assetId}.mp4`
+      await putObjectFromFile(normalizedR2Key, normalizedPath, 'video/mp4')
+      log(`normalized uploaded → ${normalizedR2Key} (${(normalizedSizeBytes / 1_048_576).toFixed(1)} MB)`)
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      log(`normalization failed (non-fatal): ${errMsg}`)
+      logEvent({
+        tenantId,
+        kind: 'video.preprocess.normalize_failed',
+        severity: 'warn',
+        subjectType: 'asset',
+        subjectId: assetId,
+        metadata: { errorMessage: errMsg },
+      })
+      // normalized_* fields stay null — rendering falls back to original file
+    }
+
+    // ── 16. Patch asset with normalized results ───────────────────────────────
 
     await patchAsset(assetId, tenantId, {
-      transcriptText: transcriptText ?? null,
-      transcriptWordTimestamps: transcriptWords ?? null,
-      transcriptionStatus: transcriptionFailed ? 'failed' : 'complete',
+      normalizedR2Key: normalizedR2Key ?? undefined,
+      normalizedSizeBytes: normalizedSizeBytes ?? undefined,
+      normalizedCodec: normalizedCodec ?? undefined,
+      normalizedAudioCodec: normalizedAudioCodec ?? undefined,
+      loudnessLufs: loudnessLufs != null ? String(loudnessLufs) : undefined,
+      loudnessTruePeakDb: loudnessTruePeakDb != null ? String(loudnessTruePeakDb) : undefined,
     })
-    log(`transcription status → ${transcriptionFailed ? 'failed' : 'complete'}`)
+    log(`asset patched with normalized results`)
 
-    // ── 15. Log event ──────────────────────────────────────────────────────────
+    // ── 17. Log event ─────────────────────────────────────────────────────────
 
     logEvent({
       tenantId,
@@ -247,13 +294,13 @@ export async function runVideoPreprocess(
         bitrateKbps: probe.bitrateKbps,
         thumbnailR2Key,
         sceneCount,
-        transcriptionComplete: !transcriptionFailed,
+        normalizedR2Key,
+        loudnessLufs,
       },
     })
 
     log(`preprocess complete`)
   } catch (err) {
-    // Mark as failed so the UI can surface the error and offer a reprocess button
     await patchAsset(assetId, tenantId, {
       transcriptionStatus: 'failed',
     }).catch((patchErr) => {
@@ -272,7 +319,6 @@ export async function runVideoPreprocess(
 
     throw err
   } finally {
-    // ── 16. Cleanup ───────────────────────────────────────────────────────────
     await fs.rm(workDir, { recursive: true, force: true }).catch((e) => {
       console.error(`[preprocess:${assetId}] cleanup failed:`, e)
     })
