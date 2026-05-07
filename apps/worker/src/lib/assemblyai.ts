@@ -39,12 +39,10 @@ export async function transcribeFile(
 
   const transcript = await client.transcripts.transcribe({
     audio_url: publicUrl,
+    speech_models: ['universal-2'], // required by AAI v3 API — must be non-empty
     punctuate: true,
     format_text: true,
     speaker_labels: false,
-    // language_detection omitted — SDK defaults to English (universal-2).
-    // Do NOT pass language_detection: false without also setting speech_models.
-    // Do NOT pass word_boost: [] — SDK rejects empty arrays.
   })
 
   if (transcript.status === 'error' || !transcript.text) {
