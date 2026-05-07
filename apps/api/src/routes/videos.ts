@@ -198,6 +198,7 @@ const videoRoutes: FastifyPluginAsync = async (fastify) => {
       ...asset,
       publicUrl: getPublicUrl(asset.r2Key),
       thumbnailPublicUrl: null,
+      normalizedPublicUrl: null,
     })
   })
   // POST /videos/:id/reprocess ─────────────────────────────────────────────────

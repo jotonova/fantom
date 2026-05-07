@@ -67,11 +67,16 @@ function isAssetKind(v: unknown): v is AssetKind {
   return typeof v === 'string' && (ASSET_KINDS as readonly string[]).includes(v)
 }
 
-function withPublicUrl(asset: Asset): Asset & { publicUrl: string; thumbnailPublicUrl: string | null } {
+function withPublicUrl(asset: Asset): Asset & {
+  publicUrl: string
+  thumbnailPublicUrl: string | null
+  normalizedPublicUrl: string | null
+} {
   return {
     ...asset,
     publicUrl: getPublicUrl(asset.r2Key),
     thumbnailPublicUrl: asset.thumbnailR2Key ? getPublicUrl(asset.thumbnailR2Key) : null,
+    normalizedPublicUrl: asset.normalizedR2Key ? getPublicUrl(asset.normalizedR2Key) : null,
   }
 }
 
