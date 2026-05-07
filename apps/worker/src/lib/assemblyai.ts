@@ -45,9 +45,9 @@ export async function transcribeFile(
     speaker_labels: false,
   })
 
-  if (transcript.status === 'error' || !transcript.text) {
+  if (transcript.status === 'error') {
     throw new Error(
-      `AssemblyAI transcription failed: status=${transcript.status} error=${transcript.error ?? 'unknown'}`,
+      `AssemblyAI transcription failed: status=error error=${transcript.error ?? 'unknown'}`,
     )
   }
 
@@ -62,7 +62,7 @@ export async function transcribeFile(
 
   return {
     transcriptId: transcript.id,
-    text: transcript.text,
+    text: transcript.text ?? '',
     words,
     audioDurationSeconds: (transcript.audio_duration ?? 0),
   }
