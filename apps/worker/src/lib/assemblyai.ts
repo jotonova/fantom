@@ -42,8 +42,9 @@ export async function transcribeFile(
     punctuate: true,
     format_text: true,
     speaker_labels: false,
-    language_detection: false,
-    word_boost: [],
+    // language_detection omitted — SDK defaults to English (universal-2).
+    // Do NOT pass language_detection: false without also setting speech_models.
+    // Do NOT pass word_boost: [] — SDK rejects empty arrays.
   })
 
   if (transcript.status === 'error' || !transcript.text) {
