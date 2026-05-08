@@ -256,8 +256,8 @@ function VideoAssetCard({
                   {asset.sceneCount === 1 ? '1 scene' : `${asset.sceneCount} scenes`}
                 </Badge>
               )}
-              {asset.transcriptionStatus === 'complete' && asset.transcriptText ? (
-                <Badge variant="success">Transcript ✓</Badge>
+              {asset.transcriptionStatus === 'complete' ? (
+                <Badge variant="success" title={!asset.transcriptText ? 'Transcript complete (no speech detected)' : undefined}>Transcript ✓</Badge>
               ) : asset.transcriptionStatus === 'failed' ? (
                 <Badge variant="danger">Transcript failed</Badge>
               ) : asset.transcriptionStatus === 'pending' ? (
