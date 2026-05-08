@@ -7,10 +7,6 @@ node_modules/
 dist/
 .next/
 out/
-# packages/db/dist is tracked so Render API always gets the correct
-# Drizzle schema without relying on build-cache ordering.
-!packages/db/dist/
-!packages/db/dist/**
 
 # Environment files
 .env
