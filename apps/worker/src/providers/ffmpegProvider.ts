@@ -166,6 +166,7 @@ export class FfmpegProvider implements RenderProvider {
       const audioAsset = await createAssetRecord({
         tenantId,
         kind: 'audio',
+        source: 'rendered',
         r2Key: audioKey,
         originalFilename: `job-${jobId}-audio.mp3`,
         mimeType: 'audio/mpeg',

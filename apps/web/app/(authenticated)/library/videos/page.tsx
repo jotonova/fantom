@@ -339,7 +339,7 @@ export default function VideoLibraryPage() {
   // ── Load existing videos ────────────────────────────────────────────────────
 
   async function loadVideos(cursor?: string) {
-    const params = new URLSearchParams({ kind: 'video', limit: '50' })
+    const params = new URLSearchParams({ kind: 'video', source: 'upload', limit: '50' })
     if (cursor) params.set('cursor', cursor)
     return apiFetch<AssetsResponse>(`/assets?${params}`)
   }

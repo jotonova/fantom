@@ -165,6 +165,7 @@ const videoRoutes: FastifyPluginAsync = async (fastify) => {
           durationSeconds: String(durationSeconds),
           transcriptionStatus: 'pending',
           tags: [],
+          metadata: { source: 'upload' },
         })
         .returning()
       return row

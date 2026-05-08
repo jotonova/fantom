@@ -201,9 +201,9 @@ const assetRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /assets ────────────────────────────────────────────────────────────────
   fastify.get<{
-    Querystring: { kind?: string; tag?: string; limit?: string; cursor?: string }
+    Querystring: { kind?: string; tag?: string; limit?: string; cursor?: string; source?: string }
   }>('/assets', { preHandler: requireAuth }, async (request, reply) => {
-    const { kind, tag, cursor } = request.query
+    const { kind, tag, cursor, source } = request.query
     const limit = Math.min(Number(request.query.limit ?? 50), 100)
     const tenantId = request.tenantId!
 
@@ -220,6 +220,13 @@ const assetRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (typeof cursor === 'string' && cursor) {
         conditions.push(lt(assets.createdAt, new Date(cursor)))
+      }
+      // ?source=upload filters to user uploads only; omit for unfiltered admin/dispatch access.
+      // NULL-tolerant: legacy rows without metadata.source are included when filtering for uploads.
+      if (typeof source === 'string' && source) {
+        conditions.push(
+          sql`(${assets.metadata}->>'source' = ${source} OR ${assets.metadata}->>'source' IS NULL)`,
+        )
       }
 
       return tx

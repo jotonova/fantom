@@ -58,6 +58,7 @@ export async function patchAsset(
 export async function createAssetRecord(params: {
   tenantId: string
   kind: 'audio' | 'video'
+  source: 'upload' | 'rendered' | 'imported'
   r2Key: string
   originalFilename: string
   mimeType: string
@@ -83,6 +84,7 @@ export async function createAssetRecord(params: {
         width: params.width ?? null,
         height: params.height ?? null,
         tags: [],
+        metadata: { source: params.source },
       })
       .returning()
     return row

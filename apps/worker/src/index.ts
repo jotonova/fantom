@@ -289,6 +289,7 @@ async function dispatchRender(bullJob: BullJob<QueuePayload>): Promise<void> {
     const videoAsset = await createAssetRecord({
       tenantId,
       kind: 'video',
+      source: 'rendered',
       r2Key: result.r2Key,
       originalFilename: result.originalFilename,
       mimeType: result.mimeType,
