@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { eq, sql } from 'drizzle-orm'
 import { db, tenants } from '@fantom/db'
 import type { Event } from '@fantom/db'
@@ -11,6 +12,9 @@ function getTodayKey(): string {
   return new Date().toISOString().slice(0, 10) // YYYY-MM-DD
 }
 
+/** 1-hour dedupe window (ms). */
+const DEDUPE_WINDOW_MS = 60 * 60 * 1000
+
 export type AlertSkippedReason = 'not_configured' | 'daily_cap' | 'throttled' | 'send_failed'
 
 export interface AlertResult {
@@ -19,21 +23,21 @@ export interface AlertResult {
 }
 
 /**
- * Throttled alert sender.
+ * Throttled + deduplicated alert sender.
  *
- * For tenant-scoped events: uses an atomic INSERT...ON CONFLICT...DO UPDATE
- * pattern to both gate and record the alert in a single round-trip. The WHERE
- * clause on the UPDATE encodes both throttle conditions (5-min cooldown AND
- * per-tenant daily cap). If the UPDATE WHERE fails, no row is returned and we
- * know to skip — without any read-then-write race window.
+ * Two independent gates run in order before an email is dispatched:
  *
- * For system events (tenant_id IS NULL): alert_throttle requires a non-null
- * tenant_id, so per-kind throttling is not available. A coarse global daily cap
- * check is performed instead; this path is intentionally simpler since system
- * events (e.g. admin smoke tests) are low-volume and not production-critical.
+ * 1. **Throttle gate** (existing): atomic INSERT…ON CONFLICT limits to one alert
+ *    per 5-minute window per (tenant, kind) pair, plus a per-tenant daily cap.
+ *    Critical-severity events skip the 5-minute cooldown but still respect the cap.
  *
- * Returns an AlertResult describing whether the alert was sent and why it
- * was skipped if not.
+ * 2. **Dedupe gate** (new): atomic INSERT…ON CONFLICT prevents the *same* alert
+ *    content from re-firing within a 1-hour window. Dedupe key is
+ *    sha256(tenantId|kind|severity|subjectType). Suppressed duplicates are counted;
+ *    when the window resets the next email prepends "(N duplicates suppressed)".
+ *
+ * For system events (tenant_id IS NULL): both gates are skipped — system events
+ * are low-volume admin smoke tests, not production alerts.
  */
 export async function maybeAlert(event: Event): Promise<AlertResult> {
   const apiKey = process.env['RESEND_API_KEY']
@@ -57,7 +61,7 @@ export async function maybeAlert(event: Event): Promise<AlertResult> {
   const kind = event.kind
   const isCritical = event.severity === 'critical'
 
-  // ── Throttle gate ─────────────────────────────────────────────────────────────
+  // ── Gate 1: Throttle ──────────────────────────────────────────────────────────
 
   if (tenantId) {
     // Tenant-scoped events: atomic throttle gate via INSERT...ON CONFLICT.
@@ -108,7 +112,7 @@ export async function maybeAlert(event: Event): Promise<AlertResult> {
         console.log(`[observability] ${skippedReason}: ${kind} for tenant ${tenantId}`)
         return { sent: false, skippedReason }
       }
-      // Row returned → we won the upsert race, proceed to send.
+      // Row returned → we won the upsert race, proceed to Gate 2.
     } catch (err) {
       console.error('[observability] throttle upsert failed:', err)
       return { sent: false, skippedReason: 'send_failed' }
@@ -131,6 +135,71 @@ export async function maybeAlert(event: Event): Promise<AlertResult> {
     } catch (err) {
       console.error('[observability] daily cap check failed:', err)
       return { sent: false, skippedReason: 'send_failed' }
+    }
+  }
+
+  // ── Gate 2: Dedupe (1-hour window, tenant-scoped only) ────────────────────────
+
+  let prevSuppressedCount = 0
+
+  if (tenantId) {
+    // Dedupe key: sha256(tenantId|kind|severity|subjectType).
+    // Excludes subjectId, message, and metadata — those vary per occurrence.
+    const dedupeKey = createHash('sha256')
+      .update(`${tenantId}|${kind}|${event.severity}|${event.subjectType ?? ''}`)
+      .digest('hex')
+
+    try {
+      // Atomic UPSERT encodes the full decision tree in a single round-trip:
+      //
+      //   IN window  → suppressed_count += 1, last_sent_at unchanged → SUPPRESS
+      //   OUT of window → prev_suppressed_count = old count, suppressed_count = 0,
+      //                   last_sent_at = NOW()                          → SEND
+      //   New row   → suppressed_count = 0, last_sent_at = NOW()       → SEND
+      //
+      // prev_suppressed_count preserves the window's accumulated suppression count
+      // so the outgoing "reset" email can announce how many were suppressed.
+      const dedupeResult = await db.execute<{
+        suppressed_count: number
+        prev_suppressed_count: number
+      }>(sql`
+        INSERT INTO alert_dedupe
+          (tenant_id, dedupe_key, last_sent_at, suppressed_count, prev_suppressed_count)
+        VALUES
+          (${tenantId}, ${dedupeKey}, NOW(), 0, 0)
+        ON CONFLICT ON CONSTRAINT alert_dedupe_tenant_key DO UPDATE
+          SET
+            prev_suppressed_count = CASE
+              WHEN alert_dedupe.last_sent_at > NOW() - INTERVAL '1 hour'
+                THEN alert_dedupe.prev_suppressed_count
+                ELSE alert_dedupe.suppressed_count
+              END,
+            suppressed_count = CASE
+              WHEN alert_dedupe.last_sent_at > NOW() - INTERVAL '1 hour'
+                THEN alert_dedupe.suppressed_count + 1
+                ELSE 0
+              END,
+            last_sent_at = CASE
+              WHEN alert_dedupe.last_sent_at > NOW() - INTERVAL '1 hour'
+                THEN alert_dedupe.last_sent_at
+                ELSE NOW()
+              END
+        RETURNING suppressed_count, prev_suppressed_count
+      `)
+
+      const dedupeRow = dedupeResult.rows[0]
+      if (dedupeRow && dedupeRow.suppressed_count > 0) {
+        // suppressed_count was incremented → we're inside the cooldown window.
+        console.log(
+          `[observability] dedupe suppressed (${dedupeRow.suppressed_count} this window): ${kind}`,
+        )
+        return { sent: false, skippedReason: 'throttled' }
+      }
+      // suppressed_count = 0 → new row or window reset → proceed to send.
+      prevSuppressedCount = dedupeRow?.prev_suppressed_count ?? 0
+    } catch (err) {
+      // Non-fatal: dedupe failure should not block alert delivery.
+      console.error('[observability] dedupe upsert failed (non-fatal):', err)
     }
   }
 
@@ -159,7 +228,15 @@ export async function maybeAlert(event: Event): Promise<AlertResult> {
   const adminLink = `https://fantomvid.com/admin?event=${event.id}`
   const meta = event.metadata as Record<string, unknown>
 
+  const suppressionBanner =
+    prevSuppressedCount > 0
+      ? `<p style="font-family:sans-serif;background:#fff3cd;border:1px solid #ffc107;padding:8px 12px;border-radius:4px;">
+           <strong>${prevSuppressedCount} duplicate${prevSuppressedCount === 1 ? '' : 's'} suppressed in the last hour.</strong>
+         </p>`
+      : ''
+
   const htmlBody = `
+${suppressionBanner}
 <h2 style="font-family:sans-serif;">Fantom Alert: ${kind}</h2>
 <table style="font-family:monospace;border-collapse:collapse;" cellpadding="4">
   <tr><th align="left">Severity</th><td><strong>${event.severity.toUpperCase()}</strong></td></tr>
