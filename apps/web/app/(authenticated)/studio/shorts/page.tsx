@@ -491,7 +491,7 @@ export default function ShortsVPFPage() {
                   </svg>
                   Copy link
                 </button>
-                <Button variant="secondary" onClick={() => router.push(`/studio/shorts-legacy/${job.id}`)}>
+                <Button variant="secondary" onClick={() => router.push(`/studio/shorts/${job.id}`)}>
                   Open detail view
                 </Button>
               </div>
