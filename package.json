@@ -2,6 +2,7 @@
   "name": "fantom",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "pnpm@10.33.1",
   "engines": {
     "node": ">=20",
     "pnpm": ">=9"
