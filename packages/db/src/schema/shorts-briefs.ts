@@ -1,0 +1,70 @@
+import { sql } from 'drizzle-orm'
+import { check, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { brandKits } from './brand-kits.js'
+import { tenants } from './tenants.js'
+import { users } from './users.js'
+
+export const shortsBriefs = pgTable(
+  'shorts_briefs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+
+    // Input assets (ordered array of source asset UUIDs)
+    sourceAssetIds: uuid('source_asset_ids')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
+
+    // Brief metadata
+    title: text('title').notNull(),
+    description: text('description'),
+
+    // Voice & Brand
+    brandKitId: uuid('brand_kit_id').references(() => brandKits.id, {
+      onDelete: 'set null',
+    }),
+    voiceCloneId: text('voice_clone_id'), // ElevenLabs voice ID — not a FK
+
+    // Duration (15 | 30 | 45 | 60)
+    durationSeconds: integer('duration_seconds').notNull().default(30),
+
+    // AI-generated content (nullable — populated by brief-planning step)
+    mainScenes: jsonb('main_scenes'),
+    voiceoverScripts: jsonb('voiceover_scripts'),
+
+    // Status
+    status: text('status')
+      .notNull()
+      .default('draft')
+      .$type<'draft' | 'ready' | 'rendering' | 'rendered' | 'failed'>(),
+    errorMessage: text('error_message'),
+
+    // Audit
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tenantStatusIdx: index('shorts_briefs_tenant_status_idx').on(table.tenantId, table.status),
+    tenantCreatedAtIdx: index('shorts_briefs_tenant_created_at_idx').on(
+      table.tenantId,
+      table.createdAt,
+    ),
+    durationCheck: check(
+      'shorts_briefs_duration_check',
+      sql`${table.durationSeconds} IN (15, 30, 45, 60)`,
+    ),
+    statusCheck: check(
+      'shorts_briefs_status_check',
+      sql`${table.status} IN ('draft', 'ready', 'rendering', 'rendered', 'failed')`,
+    ),
+  }),
+)
+
+export type ShortsBrief = typeof shortsBriefs.$inferSelect
+export type NewShortsBrief = typeof shortsBriefs.$inferInsert

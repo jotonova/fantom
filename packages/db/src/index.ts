@@ -4,3 +4,4 @@
 export * from './schema/index.js'
 export { db, pool } from './client.js'
 export type { Db } from './client.js'
+export * from './repo/shorts-briefs.js'

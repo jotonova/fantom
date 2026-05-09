@@ -134,6 +134,41 @@
       "when": 1778100002000,
       "tag": "0018_assemblyai_cost_tracking",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1778200000000,
+      "tag": "0019_normalized_derivative_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1778200001000,
+      "tag": "0020_normalized_dimensions",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1778200002000,
+      "tag": "0021_backfill_video_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1778200003000,
+      "tag": "0022_alert_dedupe",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1778300000000,
+      "tag": "0023_shorts_briefs",
+      "breakpoints": true
     }
   ]
 }
