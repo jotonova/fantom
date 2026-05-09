@@ -21,12 +21,15 @@ interface ShortsBrief {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const STATUS_VARIANTS: Record<BriefStatus, 'neutral' | 'success' | 'warning' | 'danger'> = {
-  draft: 'neutral',
-  ready: 'success',
-  rendering: 'warning',
-  rendered: 'success',
-  failed: 'danger',
+const STATUS_CONFIG: Record<
+  BriefStatus,
+  { variant: 'neutral' | 'success' | 'warning' | 'danger'; className?: string; label: string }
+> = {
+  draft:     { variant: 'neutral',  label: 'Draft' },
+  ready:     { variant: 'neutral',  label: 'Ready', className: 'border-blue-800 bg-blue-950 text-blue-400' },
+  rendering: { variant: 'warning',  label: 'Rendering' },
+  rendered:  { variant: 'success',  label: 'Rendered' },
+  failed:    { variant: 'danger',   label: 'Failed' },
 }
 
 function relativeTime(iso: string): string {
@@ -142,11 +145,23 @@ export default function ShortsBriefsPage() {
                     {brief.sourceAssetIds.length} clip{brief.sourceAssetIds.length !== 1 ? 's' : ''}
                   </td>
                   <td className="px-4 py-3">
-                    <Badge variant={STATUS_VARIANTS[brief.status]}>{brief.status}</Badge>
+                    <Badge
+                      variant={STATUS_CONFIG[brief.status].variant}
+                      className={STATUS_CONFIG[brief.status].className}
+                    >
+                      {STATUS_CONFIG[brief.status].label}
+                    </Badge>
                   </td>
                   <td className="px-4 py-3 text-fantom-text-muted">{relativeTime(brief.createdAt)}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => router.push(`/studio/shorts/${brief.id}/preview`)}
+                      >
+                        Preview
+                      </Button>
                       <Button
                         variant="secondary"
                         size="sm"

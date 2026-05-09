@@ -212,8 +212,14 @@ export default function EditShortsBriefPage() {
         </div>
       )}
       {saved && (
-        <div className="rounded-fantom border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-400">
-          Brief saved.
+        <div className="flex items-center justify-between rounded-fantom border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-400">
+          <span>Brief saved.</span>
+          <button
+            onClick={() => router.push(`/studio/shorts/${id}/preview`)}
+            className="ml-4 underline hover:no-underline"
+          >
+            Preview your brief →
+          </button>
         </div>
       )}
       {brief!.errorMessage && (
@@ -390,6 +396,13 @@ export default function EditShortsBriefPage() {
 
         {!isLocked && (
           <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => router.push(`/studio/shorts/${id}/preview`)}
+              disabled={saving}
+            >
+              Preview
+            </Button>
             <Button
               variant="primary"
               onClick={handleSave}
