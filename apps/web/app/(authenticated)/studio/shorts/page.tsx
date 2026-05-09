@@ -27,7 +27,7 @@ const STATUS_CONFIG: Record<
 > = {
   draft:     { variant: 'neutral',  label: 'Draft' },
   ready:     { variant: 'neutral',  label: 'Ready', className: 'border-blue-800 bg-blue-950 text-blue-400' },
-  rendering: { variant: 'warning',  label: 'Rendering' },
+  rendering: { variant: 'warning',  label: 'Rendering', className: 'animate-pulse' },
   rendered:  { variant: 'success',  label: 'Rendered' },
   failed:    { variant: 'danger',   label: 'Failed' },
 }
@@ -169,13 +169,13 @@ export default function ShortsBriefsPage() {
                       >
                         Edit
                       </Button>
-                      {brief.status === 'rendered' && (
+                      {(brief.status === 'rendering' || brief.status === 'rendered') && (
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => router.push(`/studio/shorts/${brief.id}`)}
+                          onClick={() => router.push(`/studio/shorts/${brief.id}/render`)}
                         >
-                          View
+                          {brief.status === 'rendering' ? 'Watch' : 'View Render'}
                         </Button>
                       )}
                       {brief.status === 'draft' && (

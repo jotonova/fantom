@@ -112,6 +112,7 @@ export default function PreviewPage() {
   const [data, setData] = useState<PreviewData | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [transitioning, setTransitioning] = useState(false)
+  const [generating, setGenerating] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
   async function load() {
@@ -141,6 +142,19 @@ export default function PreviewPage() {
       setActionError(err instanceof ApiError ? err.message : 'Failed to mark ready')
     } finally {
       setTransitioning(false)
+    }
+  }
+
+  async function handleGenerate() {
+    if (!data) return
+    setActionError(null)
+    setGenerating(true)
+    try {
+      await apiFetch(`/shorts-briefs/${id}/render`, { method: 'POST' })
+      router.push(`/studio/shorts/${id}/render`)
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'Failed to start render')
+      setGenerating(false)
     }
   }
 
@@ -432,15 +446,21 @@ export default function PreviewPage() {
               </Button>
             )}
 
-            {/* Generate — disabled, 1B.4 */}
-            <div className="group relative">
-              <Button variant="primary" size="sm" disabled>
-                Generate
-              </Button>
-              <div className="pointer-events-none absolute bottom-full right-0 mb-2 hidden w-48 rounded-fantom border border-fantom-steel-border bg-fantom-steel px-2.5 py-1.5 text-xs text-fantom-text-muted shadow-lg group-hover:block">
-                Render pipeline coming in Phase 1B.4
-              </div>
-            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!isReady || generating}
+              onClick={isReady ? handleGenerate : undefined}
+              title={!isReady ? 'Mark brief as Ready before generating' : undefined}
+            >
+              {generating ? (
+                <span className="flex items-center gap-1.5">
+                  <Spinner size="sm" /> Starting…
+                </span>
+              ) : (
+                'Generate'
+              )}
+            </Button>
           </div>
         </div>
       </div>

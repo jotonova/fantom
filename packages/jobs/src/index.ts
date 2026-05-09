@@ -6,6 +6,7 @@ import { Redis } from 'ioredis'
 
 export const QUEUE_NAME = 'fantom-render'
 export const DISTRIBUTE_QUEUE_NAME = 'fantom-distribute'
+export const SHORTS_RENDER_QUEUE_NAME = 'shorts-render'
 
 // ── Job kinds ─────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,12 @@ export interface QueuePayload {
 
 export interface DistributePayload {
   distributionId: string
+  tenantId: string
+}
+
+export interface ShortsRenderPayload {
+  renderId: string
+  briefId: string
   tenantId: string
 }
 
@@ -159,6 +166,51 @@ export async function enqueueVideoPreprocess(opts: {
     { jobId: opts.assetId, tenantId: opts.tenantId },
     { jobId: bullJobId },
   )
+}
+
+// ── Shorts-render queue singleton ────────────────────────────────────────────
+
+let _shortsRenderQueue: Queue<ShortsRenderPayload> | null = null
+
+export function getShortsRenderQueue(): Queue<ShortsRenderPayload> {
+  if (!_shortsRenderQueue) {
+    _shortsRenderQueue = new Queue<ShortsRenderPayload>(SHORTS_RENDER_QUEUE_NAME, {
+      connection: makeRedisConnection(),
+      defaultJobOptions: {
+        attempts: 1, // render failures should not auto-retry; cancel or re-trigger manually
+        removeOnComplete: { count: 200 },
+        removeOnFail: { count: 200 },
+      },
+    })
+  }
+  return _shortsRenderQueue
+}
+
+export function getShortsRenderWorker(
+  handler: Processor<ShortsRenderPayload>,
+): Worker<ShortsRenderPayload> {
+  return new Worker<ShortsRenderPayload>(SHORTS_RENDER_QUEUE_NAME, handler, {
+    connection: makeRedisConnection(),
+    concurrency: 1,
+  })
+}
+
+export async function enqueueShortsBriefRender(opts: {
+  renderId: string
+  briefId: string
+  tenantId: string
+}): Promise<string> {
+  const queue = getShortsRenderQueue()
+  // Remove any existing BullMQ job with the same renderId (safety net for re-queues)
+  const existing = await queue.getJob(opts.renderId)
+  if (existing) await existing.remove()
+
+  const job = await queue.add(
+    'shorts_brief_render',
+    { renderId: opts.renderId, briefId: opts.briefId, tenantId: opts.tenantId },
+    { jobId: opts.renderId },
+  )
+  return job.id ?? opts.renderId
 }
 
 // ── Distribute queue singleton ────────────────────────────────────────────────

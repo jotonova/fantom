@@ -1,8 +1,8 @@
 import 'dotenv/config'
 import { startHealthServer } from './health.js'
 import { db, pool } from '@fantom/db'
-import { getWorker, getDistributeWorker, enqueueDistribution, JobKind, VOICE_CLONE_TRAIN, SHORT_POST_SCHEDULED, VIDEO_PREPROCESS } from '@fantom/jobs'
-import type { QueuePayload, DistributePayload } from '@fantom/jobs'
+import { getWorker, getDistributeWorker, getShortsRenderWorker, enqueueDistribution, JobKind, VOICE_CLONE_TRAIN, SHORT_POST_SCHEDULED, VIDEO_PREPROCESS } from '@fantom/jobs'
+import type { QueuePayload, DistributePayload, ShortsRenderPayload } from '@fantom/jobs'
 import type { Job as BullJob } from 'bullmq'
 import { sql } from 'drizzle-orm'
 import { RenderBus, CancelledError as RenderCancelledError } from '@fantom/render-bus'
@@ -26,6 +26,7 @@ import { InstagramDestination } from './destinations/instagramDestination.js'
 import { MlsDestination } from './destinations/mlsDestination.js'
 import { getPublicUrl, writePublicHealthSentinel } from '@fantom/storage'
 import { dispatchVoiceClone } from './handlers/voiceCloneTrain.js'
+import { handleShortsBriefRender } from './handlers/shortsBriefRenderHandler.js'
 import { runVideoPreprocess } from './providers/videoPreprocessProvider.js'
 import {
   getJobRow,
@@ -539,10 +540,12 @@ async function dispatchDistribution(bullJob: BullJob<DistributePayload>): Promis
 
 const renderWorker = getWorker(dispatchRender)
 const distributeWorker = getDistributeWorker(dispatchDistribution)
+const shortsRenderWorker = getShortsRenderWorker(handleShortsBriefRender)
 
 for (const [label, w] of [
   ['render', renderWorker],
   ['distribute', distributeWorker],
+  ['shorts-render', shortsRenderWorker],
 ] as const) {
   w.on('active', (job) => {
     console.log(`fantom-worker[${label}]: job ${job.id} (${job.name}) started`)
@@ -565,7 +568,7 @@ for (const [label, w] of [
 // provides /health/live and /health/ready for the Render health check system.
 const healthServer = startHealthServer()
 
-console.log('fantom-worker listening on queues fantom-render + fantom-distribute, ready')
+console.log('fantom-worker listening on queues fantom-render + fantom-distribute + shorts-render, ready')
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
@@ -573,6 +576,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`fantom-worker: ${signal} received — shutting down gracefully`)
   await renderWorker.close()
   await distributeWorker.close()
+  await shortsRenderWorker.close()
   await pool.end()
   healthServer.close()
   console.log('fantom-worker: shutdown complete')

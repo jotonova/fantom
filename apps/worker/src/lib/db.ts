@@ -1,5 +1,5 @@
-import { db, jobs, assets, voiceClones, tenants, tenantSettings, distributions, shortsJobs, brandKits, runwayUsage } from '@fantom/db'
-import type { Job as DbJob, Asset, VoiceClone, Distribution, ShortsJob, BrandKit } from '@fantom/db'
+import { db, jobs, assets, voiceClones, tenants, tenantSettings, distributions, shortsJobs, shortsRenders, shortsBriefs, brandKits, runwayUsage } from '@fantom/db'
+import type { Job as DbJob, Asset, VoiceClone, Distribution, ShortsJob, ShortsRender, ShortsBrief, BrandKit } from '@fantom/db'
 import type { DestinationKind } from '@fantom/distribution-bus'
 import { and, eq, gte, lt, sql, sum } from 'drizzle-orm'
 
@@ -304,6 +304,90 @@ export async function createDistributionRecord(params: {
     return r
   })
   if (!row) throw new Error('Failed to create distribution record')
+  return row
+}
+
+// ── Shorts render helpers ──────────────────────────────────────────────────────
+
+export async function getShortsRenderRow(
+  renderId: string,
+  tenantId: string,
+): Promise<ShortsRender | undefined> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    const [row] = await tx
+      .select()
+      .from(shortsRenders)
+      .where(eq(shortsRenders.id, renderId))
+      .limit(1)
+    return row
+  })
+}
+
+export async function patchShortsRender(
+  renderId: string,
+  tenantId: string,
+  values: Partial<typeof shortsRenders.$inferInsert>,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    await tx
+      .update(shortsRenders)
+      .set({ ...values, updatedAt: new Date() })
+      .where(eq(shortsRenders.id, renderId))
+  })
+}
+
+export async function patchShortsBrief(
+  briefId: string,
+  tenantId: string,
+  values: Partial<typeof shortsBriefs.$inferInsert>,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    await tx
+      .update(shortsBriefs)
+      .set({ ...values, updatedAt: new Date() })
+      .where(eq(shortsBriefs.id, briefId))
+  })
+}
+
+/**
+ * Creates an asset record for a shorts render placeholder.
+ * metadata.source is set to boolean `false` (not the string 'rendered') so the
+ * SourceClipPicker — which filters on metadata->>'source' = 'upload' — never
+ * surfaces these placeholder files as selectable clips.
+ */
+export async function createShortsPlaceholderAsset(params: {
+  tenantId: string
+  r2Key: string
+  sizeBytes: number
+  durationSeconds: number
+  width?: number
+  height?: number
+}): Promise<Asset> {
+  const row = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${params.tenantId}, true)`)
+    const [r] = await tx
+      .insert(assets)
+      .values({
+        tenantId: params.tenantId,
+        uploadedByUserId: null,
+        kind: 'video',
+        originalFilename: 'placeholder-render.mp4',
+        mimeType: 'video/mp4',
+        sizeBytes: params.sizeBytes,
+        r2Key: params.r2Key,
+        durationSeconds: String(params.durationSeconds),
+        width: params.width ?? 1080,
+        height: params.height ?? 1920,
+        tags: [],
+        metadata: { source: false, placeholder: true },
+      })
+      .returning()
+    return r
+  })
+  if (!row) throw new Error('Failed to create placeholder asset record')
   return row
 }
 

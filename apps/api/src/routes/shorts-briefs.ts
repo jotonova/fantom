@@ -1,14 +1,16 @@
 import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm'
 import fp from 'fastify-plugin'
 import type { FastifyPluginAsync } from 'fastify'
-import { db, shortsBriefs, assets, brandKits, voiceClones } from '@fantom/db'
-import type { ShortsBrief } from '@fantom/db'
+import { db, shortsBriefs, shortsRenders, assets, brandKits, voiceClones } from '@fantom/db'
+import type { ShortsBrief, ShortsRender } from '@fantom/db'
 import { getPublicUrl } from '@fantom/storage'
+import { enqueueShortsBriefRender } from '@fantom/jobs'
 import {
   validateBriefForReady,
   estimateBriefCost,
   type BriefForValidation,
 } from '@fantom/shared'
+import { logEvent } from '@fantom/observability'
 import { requireAuth } from '../plugins/auth.js'
 
 // ── Validation helpers ────────────────────────────────────────────────────────
@@ -245,6 +247,160 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
         estimates,
         validation,
       })
+    },
+  )
+
+  // POST /shorts-briefs/:id/render ──────────────────────────────────────────────
+  // Enqueues a render job for a 'ready' brief. Returns 201 with the render row.
+  // Must be registered BEFORE /shorts-briefs/:id to avoid route collision.
+  fastify.post<{ Params: { id: string } }>(
+    '/shorts-briefs/:id/render',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { id } = request.params
+      const tenantId = request.tenantId!
+
+      // Fetch brief
+      const brief = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        const [row] = await tx.select().from(shortsBriefs).where(eq(shortsBriefs.id, id)).limit(1)
+        return row
+      })
+
+      if (!brief) return reply.code(404).send({ error: 'Brief not found' })
+      if (brief.status !== 'ready') {
+        return reply.code(409).send({
+          error: `Brief must be in 'ready' status to generate (current: ${brief.status})`,
+        })
+      }
+
+      // Check for an already-active render (queued or running)
+      const activeRender = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        const [row] = await tx
+          .select()
+          .from(shortsRenders)
+          .where(
+            and(
+              eq(shortsRenders.briefId, id),
+              eq(shortsRenders.tenantId, tenantId),
+            ),
+          )
+          .orderBy(desc(shortsRenders.createdAt))
+          .limit(1)
+        return row
+      })
+
+      if (activeRender && (activeRender.status === 'queued' || activeRender.status === 'running')) {
+        return reply.code(409).send({
+          error: `A render is already ${activeRender.status} for this brief`,
+          renderId: activeRender.id,
+        })
+      }
+
+      // Create render row
+      const render = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        const [row] = await tx
+          .insert(shortsRenders)
+          .values({
+            tenantId,
+            briefId: id,
+            status: 'queued',
+          })
+          .returning()
+        return row
+      })
+
+      if (!render) return reply.code(500).send({ error: 'Failed to create render job' })
+
+      // Enqueue BullMQ job
+      const bullJobId = await enqueueShortsBriefRender({
+        renderId: render.id,
+        briefId: id,
+        tenantId,
+      })
+
+      // Persist BullMQ job ID back to the render row
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        await tx
+          .update(shortsRenders)
+          .set({ bullmqJobId: bullJobId, updatedAt: new Date() })
+          .where(eq(shortsRenders.id, render.id))
+      })
+
+      logEvent({
+        tenantId,
+        kind: 'shorts.render.queued',
+        severity: 'info',
+        subjectType: 'shorts_render',
+        subjectId: render.id,
+        metadata: { briefId: id, bullmqJobId: bullJobId },
+      })
+
+      return reply.code(201).send({ ...render, bullmqJobId: bullJobId })
+    },
+  )
+
+  // GET /shorts-briefs/:id/render ───────────────────────────────────────────────
+  // Returns the latest render for this brief, with output URL if completed.
+  // Must be registered BEFORE /shorts-briefs/:id to avoid route collision.
+  fastify.get<{ Params: { id: string } }>(
+    '/shorts-briefs/:id/render',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { id } = request.params
+      const tenantId = request.tenantId!
+
+      // Verify brief exists
+      const brief = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        const [row] = await tx
+          .select({ id: shortsBriefs.id })
+          .from(shortsBriefs)
+          .where(eq(shortsBriefs.id, id))
+          .limit(1)
+        return row
+      })
+
+      if (!brief) return reply.code(404).send({ error: 'Brief not found' })
+
+      // Fetch latest render
+      const render = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        const [row] = await tx
+          .select()
+          .from(shortsRenders)
+          .where(
+            and(
+              eq(shortsRenders.briefId, id),
+              eq(shortsRenders.tenantId, tenantId),
+            ),
+          )
+          .orderBy(desc(shortsRenders.createdAt))
+          .limit(1)
+        return row
+      })
+
+      if (!render) return reply.code(404).send({ error: 'No render found for this brief' })
+
+      // Hydrate output URL if completed
+      let outputUrl: string | null = null
+      if (render.outputAssetId) {
+        const asset = await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+          const [row] = await tx
+            .select({ r2Key: assets.r2Key })
+            .from(assets)
+            .where(eq(assets.id, render.outputAssetId!))
+            .limit(1)
+          return row
+        })
+        if (asset) outputUrl = getPublicUrl(asset.r2Key)
+      }
+
+      return reply.send({ ...render, outputUrl })
     },
   )
 
