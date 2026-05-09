@@ -34,6 +34,11 @@ export const shortsBriefs = pgTable(
     // Duration (15 | 30 | 45 | 60)
     durationSeconds: integer('duration_seconds').notNull().default(30),
 
+    // Creative brief content (nullable — user-written, AI-refined in later phases)
+    opening: text('opening'),
+    closing: text('closing'),
+    pacing: text('pacing').$type<'fast' | 'medium' | 'slow'>(),
+
     // AI-generated content (nullable — populated by brief-planning step)
     mainScenes: jsonb('main_scenes'),
     voiceoverScripts: jsonb('voiceover_scripts'),
@@ -62,6 +67,10 @@ export const shortsBriefs = pgTable(
     statusCheck: check(
       'shorts_briefs_status_check',
       sql`${table.status} IN ('draft', 'ready', 'rendering', 'rendered', 'failed')`,
+    ),
+    pacingCheck: check(
+      'shorts_briefs_pacing_check',
+      sql`${table.pacing} IN ('fast', 'medium', 'slow')`,
     ),
   }),
 )

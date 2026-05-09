@@ -169,6 +169,13 @@
       "when": 1778300000000,
       "tag": "0023_shorts_briefs",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1778400000000,
+      "tag": "0024_shorts_briefs_content_fields",
+      "breakpoints": true
     }
   ]
 }
