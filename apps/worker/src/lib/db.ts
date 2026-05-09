@@ -1,7 +1,7 @@
 import { db, jobs, assets, voiceClones, tenants, tenantSettings, distributions, shortsJobs, shortsRenders, shortsBriefs, brandKits, runwayUsage } from '@fantom/db'
 import type { Job as DbJob, Asset, VoiceClone, Distribution, ShortsJob, ShortsRender, ShortsBrief, BrandKit } from '@fantom/db'
 import type { DestinationKind } from '@fantom/distribution-bus'
-import { and, eq, gte, lt, sql, sum } from 'drizzle-orm'
+import { and, eq, gte, inArray, lt, sql, sum } from 'drizzle-orm'
 
 // ── Job helpers ────────────────────────────────────────────────────────────────
 
@@ -352,19 +352,50 @@ export async function patchShortsBrief(
   })
 }
 
+export async function getShortsBriefRow(
+  briefId: string,
+  tenantId: string,
+): Promise<typeof shortsBriefs.$inferSelect | undefined> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    const [row] = await tx.select().from(shortsBriefs).where(eq(shortsBriefs.id, briefId)).limit(1)
+    return row
+  })
+}
+
 /**
- * Creates an asset record for a shorts render placeholder.
- * metadata.source is set to boolean `false` (not the string 'rendered') so the
- * SourceClipPicker — which filters on metadata->>'source' = 'upload' — never
- * surfaces these placeholder files as selectable clips.
+ * Fetches assets by IDs and returns them in the same order as `assetIds`.
+ * Assets not found in the DB are silently omitted.
  */
-export async function createShortsPlaceholderAsset(params: {
+export async function getAssetsInOrder(
+  assetIds: string[],
+  tenantId: string,
+): Promise<Array<typeof assets.$inferSelect>> {
+  if (assetIds.length === 0) return []
+  const rows = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    return tx.select().from(assets).where(inArray(assets.id, assetIds))
+  })
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  return assetIds.map((id) => byId.get(id)).filter((r): r is typeof assets.$inferSelect => r != null)
+}
+
+/**
+ * Creates an asset record for a rendered shorts output.
+ *
+ * metadata.source is set to boolean `false` (NOT the string 'rendered') so the
+ * SourceClipPicker — which filters on ?source=upload — never surfaces rendered
+ * outputs as selectable clips. This is a hard guardrail: do not change without
+ * also auditing the SourceClipPicker query.
+ */
+export async function createShortsRenderedAsset(params: {
   tenantId: string
   r2Key: string
   sizeBytes: number
   durationSeconds: number
   width?: number
   height?: number
+  metadata?: Record<string, unknown>
 }): Promise<Asset> {
   const row = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${params.tenantId}, true)`)
@@ -374,7 +405,7 @@ export async function createShortsPlaceholderAsset(params: {
         tenantId: params.tenantId,
         uploadedByUserId: null,
         kind: 'video',
-        originalFilename: 'placeholder-render.mp4',
+        originalFilename: 'output.mp4',
         mimeType: 'video/mp4',
         sizeBytes: params.sizeBytes,
         r2Key: params.r2Key,
@@ -382,12 +413,12 @@ export async function createShortsPlaceholderAsset(params: {
         width: params.width ?? 1080,
         height: params.height ?? 1920,
         tags: [],
-        metadata: { source: false, placeholder: true },
+        metadata: { source: false, ...params.metadata },
       })
       .returning()
     return r
   })
-  if (!row) throw new Error('Failed to create placeholder asset record')
+  if (!row) throw new Error('Failed to create rendered asset record')
   return row
 }
 

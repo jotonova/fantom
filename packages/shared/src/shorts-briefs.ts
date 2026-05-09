@@ -129,8 +129,13 @@ export function validateBriefForReady(
 /** TODO: calibrate from actual ElevenLabs bills in 1B.5. Creator plan rate. */
 export const ELEVENLABS_USD_PER_1K_CHARS = 0.30
 
-/** TODO: calibrate from actual render costs in 1B.5. Placeholder. */
-export const RENDER_USD_PER_MINUTE = 0.05
+/**
+ * Rough estimate: Render Standard 2GB ≈ $0.0167/hr idle; during active render
+ * assume ~2× for CPU headroom → $0.033/hr ÷ 60 min ≈ $0.0006/min wall-clock.
+ * Rounded up generously since this is a user-facing display figure, not billing.
+ * TODO: calibrate against actual 1B.5 + 1B.6 render telemetry.
+ */
+export const RENDER_USD_PER_MINUTE = 0.02
 
 export interface CostEstimate {
   voCharCount: number
