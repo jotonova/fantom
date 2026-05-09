@@ -94,6 +94,7 @@ export async function handleShortsBriefRender(
         normalizedR2Key: a.normalizedR2Key!,
         durationSeconds: a.durationSeconds,
         audioChannels: a.audioChannels,
+        transcriptWordTimestamps: a.transcriptWordTimestamps as import('../lib/snapCuts.js').TranscriptWord[] | null,
       }))
 
     if (clips.length === 0) {

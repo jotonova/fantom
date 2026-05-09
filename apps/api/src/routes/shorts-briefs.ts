@@ -499,13 +499,15 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
         patch.status = 'ready'
         effectiveStatus = 'ready'
       } else if (newStatus === 'draft') {
-        // Only ready → draft is allowed here (unlock for editing)
-        if (existing.status !== 'ready') {
+        // Allowed: ready → draft (edit unlock), cancelled → draft, failed → draft (retry)
+        const allowedFromStatuses = ['ready', 'cancelled', 'failed']
+        if (!allowedFromStatuses.includes(existing.status)) {
           return reply.code(409).send({
-            error: `Can only revert to draft from ready (current status: ${existing.status})`,
+            error: `Can only revert to draft from ready, cancelled, or failed (current status: ${existing.status})`,
           })
         }
         patch.status = 'draft'
+        patch.errorMessage = null
         effectiveStatus = 'draft'
       } else {
         // rendering/rendered/failed transitions are managed by the render pipeline

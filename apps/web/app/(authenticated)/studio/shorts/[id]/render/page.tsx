@@ -55,6 +55,7 @@ export default function RenderStatusPage() {
   const [briefTitle, setBriefTitle] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState(false)
+  const [unlocking, setUnlocking] = useState(false)
 
   const loadRender = useCallback(async () => {
     try {
@@ -84,6 +85,18 @@ export default function RenderStatusPage() {
     const t = setInterval(loadRender, 3_000)
     return () => clearInterval(t)
   }, [render, loadRender])
+
+  async function handleTryAgain() {
+    if (!window.confirm('Reset this brief to draft so you can adjust and generate again?')) return
+    setUnlocking(true)
+    try {
+      await apiFetch(`/shorts-briefs/${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'draft' }) })
+      router.push(`/studio/shorts/${id}/preview`)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to reset brief')
+      setUnlocking(false)
+    }
+  }
 
   async function handleCancel() {
     if (!render) return
@@ -247,9 +260,10 @@ export default function RenderStatusPage() {
           <Button
             variant="primary"
             size="sm"
-            onClick={() => router.push(`/studio/shorts/${id}/preview`)}
+            onClick={handleTryAgain}
+            disabled={unlocking}
           >
-            Try Again
+            {unlocking ? 'Resetting…' : 'Try Again'}
           </Button>
         )}
         {r.status === 'completed' && (

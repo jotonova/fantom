@@ -19,6 +19,8 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { getObjectToFile } from '@fantom/storage'
 import { probeVideo } from './videoProbe.js'
+import { snapTrimToSilence, snapToleranceMs } from './snapCuts.js'
+import type { TranscriptWord } from './snapCuts.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -32,6 +34,8 @@ export interface SourceClipInput {
   /** Drizzle returns numeric columns as strings — accept either */
   durationSeconds: string | number | null
   audioChannels: number | null
+  /** Word timestamps from AssemblyAI preprocessing; null if not yet transcribed */
+  transcriptWordTimestamps: TranscriptWord[] | null
 }
 
 export interface AssemblyInput {
@@ -86,61 +90,87 @@ interface ClipPlan {
  * the 1B.9 regenerate slider will use them for smarter selection.
  */
 function buildClipPlan(
-  clips: Array<{ localPath: string; durationSeconds: number; hasAudio: boolean }>,
+  clips: Array<{ localPath: string; durationSeconds: number; hasAudio: boolean; words: TranscriptWord[] | null }>,
   target: number,
   pacing: 'fast' | 'medium' | 'slow' | null,
+  log: (msg: string) => void,
 ): ClipPlan[] {
   const N = clips.length
   const totalSrc = clips.reduce((acc, c) => acc + c.durationSeconds, 0)
 
+  // ── Compute raw (pre-snap) offsets ────────────────────────────────────────────
+
+  type RawSlice = { startOffset: number; duration: number }
+  let rawSlices: RawSlice[]
+
   // Under target + 2s tolerance: use every clip full-length, accept the under-run
   if (totalSrc <= target + 2) {
-    return clips.map((c) => ({
-      localPath: c.localPath,
-      startOffset: 0,
-      duration: c.durationSeconds,
-      clipDuration: c.durationSeconds,
-      hasAudio: c.hasAudio,
-    }))
+    rawSlices = clips.map((c) => ({ startOffset: 0, duration: c.durationSeconds }))
+  } else {
+    const p = pacing ?? 'fast'
+
+    if (p === 'fast') {
+      const slicePerClip = target / N
+      rawSlices = clips.map((c) => ({
+        startOffset: 0,
+        duration: Math.min(slicePerClip, c.durationSeconds),
+      }))
+    } else if (p === 'medium') {
+      const slicePerClip = target / N
+      rawSlices = clips.map((c) => ({
+        startOffset: c.durationSeconds * 0.25,
+        duration: Math.min(slicePerClip, c.durationSeconds * 0.75),
+      }))
+    } else {
+      // slow: front-loaded weight distribution
+      const firstHalfCount = Math.ceil(N / 2)
+      const rawWeights = clips.map((_, i) => (i < firstHalfCount ? 1.5 : 0.7))
+      const totalWeight = rawWeights.reduce((a, b) => a + b, 0)
+      const budgets = rawWeights.map((w) => (w / totalWeight) * target)
+      rawSlices = clips.map((c, i) => ({
+        startOffset: 0,
+        duration: Math.min(budgets[i]!, c.durationSeconds),
+      }))
+    }
   }
 
-  const p = pacing ?? 'fast'
+  // ── Apply speech-aware snap ───────────────────────────────────────────────────
 
-  if (p === 'fast') {
-    const slicePerClip = target / N
-    return clips.map((c) => ({
+  const tolerance = snapToleranceMs(pacing)
+
+  return clips.map((c, i) => {
+    const raw = rawSlices[i]!
+    const words = c.words
+
+    if (!words || words.length === 0) {
+      // No transcript — skip snapping
+      return { localPath: c.localPath, startOffset: raw.startOffset, duration: raw.duration, clipDuration: c.durationSeconds, hasAudio: c.hasAudio }
+    }
+
+    const desiredStartMs = raw.startOffset * 1000
+    const desiredEndMs = (raw.startOffset + raw.duration) * 1000
+    const clipDurationMs = c.durationSeconds * 1000
+
+    const snap = snapTrimToSilence(words, desiredStartMs, desiredEndMs, tolerance, clipDurationMs)
+
+    const snappedStartOffset = snap.startMs / 1000
+    const snappedDuration = (snap.endMs - snap.startMs) / 1000
+
+    if (snap.startReason !== 'original' || snap.endReason !== 'original') {
+      log(
+        `  [${i + 1}] snap: start ${snap.startReason}(${snap.startDeltaMs > 0 ? '+' : ''}${snap.startDeltaMs}ms) ` +
+          `end ${snap.endReason}(${snap.endDeltaMs > 0 ? '+' : ''}${snap.endDeltaMs}ms)`,
+      )
+    }
+
+    return {
       localPath: c.localPath,
-      startOffset: 0,
-      duration: Math.min(slicePerClip, c.durationSeconds),
+      startOffset: snappedStartOffset,
+      duration: snappedDuration,
       clipDuration: c.durationSeconds,
       hasAudio: c.hasAudio,
-    }))
-  }
-
-  if (p === 'medium') {
-    const slicePerClip = target / N
-    return clips.map((c) => ({
-      localPath: c.localPath,
-      startOffset: c.durationSeconds * 0.25, // start at 25% mark
-      duration: Math.min(slicePerClip, c.durationSeconds * 0.75),
-      clipDuration: c.durationSeconds,
-      hasAudio: c.hasAudio,
-    }))
-  }
-
-  // slow: front-loaded weight distribution
-  const firstHalfCount = Math.ceil(N / 2)
-  const rawWeights = clips.map((_, i) => (i < firstHalfCount ? 1.5 : 0.7))
-  const totalWeight = rawWeights.reduce((a, b) => a + b, 0)
-  const budgets = rawWeights.map((w) => (w / totalWeight) * target)
-
-  return clips.map((c, i) => ({
-    localPath: c.localPath,
-    startOffset: 0,
-    duration: Math.min(budgets[i]!, c.durationSeconds),
-    clipDuration: c.durationSeconds,
-    hasAudio: c.hasAudio,
-  }))
+    }
+  })
 }
 
 // ── ffmpeg args builder ───────────────────────────────────────────────────────
@@ -244,7 +274,7 @@ export async function assembleShortFromBrief(
 
   await checkCancelled()
 
-  const downloaded: Array<{ localPath: string; durationSeconds: number; hasAudio: boolean }> = []
+  const downloaded: Array<{ localPath: string; durationSeconds: number; hasAudio: boolean; words: TranscriptWord[] | null }> = []
 
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i]!
@@ -279,6 +309,7 @@ export async function assembleShortFromBrief(
       localPath,
       durationSeconds,
       hasAudio: (clip.audioChannels ?? 0) > 0,
+      words: (clip.transcriptWordTimestamps as TranscriptWord[] | null) ?? null,
     })
   }
 
@@ -292,7 +323,7 @@ export async function assembleShortFromBrief(
 
   await checkCancelled()
 
-  const plan = buildClipPlan(downloaded, brief.durationSeconds, brief.pacing)
+  const plan = buildClipPlan(downloaded, brief.durationSeconds, brief.pacing, log)
   const plannedTotal = plan.reduce((acc, c) => acc + c.duration, 0)
 
   log(
