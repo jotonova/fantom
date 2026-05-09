@@ -199,7 +199,6 @@ export default function PreviewPage() {
   const { blockers, warnings, info } = validation
   const hasValidationIssues = blockers.length > 0 || warnings.length > 0 || info.length > 0
   const canMarkReady = brief.status === 'draft' && blockers.length === 0
-  const isReady = brief.status === 'ready'
   const statusConfig = STATUS_BADGE[brief.status]
 
   const totalClipS = clips.reduce((acc, c) => acc + (c.durationSeconds ? Number(c.durationSeconds) : 0), 0)
@@ -415,7 +414,7 @@ export default function PreviewPage() {
             >
               Edit Brief
             </Button>
-            {isReady && (
+            {brief.status === 'ready' && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -428,39 +427,84 @@ export default function PreviewPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {!isReady && (
+            {/* Draft — Mark Ready (+ blocked tooltip if needed) */}
+            {brief.status === 'draft' && (
+              <div className="group relative">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={!canMarkReady || transitioning}
+                  onClick={canMarkReady && !transitioning ? handleMarkReady : undefined}
+                >
+                  {transitioning ? (
+                    <span className="flex items-center gap-1.5">
+                      <Spinner size="sm" /> Saving…
+                    </span>
+                  ) : (
+                    'Mark Ready'
+                  )}
+                </Button>
+                {!canMarkReady && blockers.length > 0 && (
+                  <div className="pointer-events-none absolute bottom-full right-0 mb-2 hidden w-64 rounded-fantom border border-fantom-steel-border bg-fantom-steel px-2.5 py-1.5 text-xs text-fantom-text-muted shadow-lg group-hover:block">
+                    {blockers[0]}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Ready — Generate */}
+            {brief.status === 'ready' && (
               <Button
                 variant="primary"
                 size="sm"
-                disabled={!canMarkReady || transitioning}
-                onClick={handleMarkReady}
-                title={blockers.length > 0 ? blockers.join(' · ') : undefined}
+                disabled={generating}
+                onClick={handleGenerate}
               >
-                {transitioning ? (
+                {generating ? (
                   <span className="flex items-center gap-1.5">
-                    <Spinner size="sm" /> Saving…
+                    <Spinner size="sm" /> Starting…
                   </span>
                 ) : (
-                  'Mark Ready'
+                  'Generate'
                 )}
               </Button>
             )}
 
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={!isReady || generating}
-              onClick={isReady ? handleGenerate : undefined}
-              title={!isReady ? 'Mark brief as Ready before generating' : undefined}
-            >
-              {generating ? (
+            {/* Rendering — live indicator linking to render detail */}
+            {brief.status === 'rendering' && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => router.push(`/studio/shorts/${id}/render`)}
+              >
                 <span className="flex items-center gap-1.5">
-                  <Spinner size="sm" /> Starting…
+                  <Spinner size="sm" />
+                  Rendering… View →
                 </span>
-              ) : (
-                'Generate'
-              )}
-            </Button>
+              </Button>
+            )}
+
+            {/* Rendered — link to render detail */}
+            {brief.status === 'rendered' && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => router.push(`/studio/shorts/${id}/render`)}
+              >
+                View Render →
+              </Button>
+            )}
+
+            {/* Failed — link to render detail for error info */}
+            {brief.status === 'failed' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push(`/studio/shorts/${id}/render`)}
+              >
+                View Error →
+              </Button>
+            )}
           </div>
         </div>
       </div>
