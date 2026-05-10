@@ -147,7 +147,8 @@ export default function EditShortsBriefPage() {
   }
 
   async function handleDelete() {
-    if (!confirm('Delete this brief? This cannot be undone.')) return
+    const title = brief?.title || 'this brief'
+    if (!confirm(`Delete brief "${title}"? This will permanently remove the brief and any rendered output. Cannot be undone.`)) return
     setDeleting(true)
     try {
       await apiFetch(`/shorts-briefs/${id}`, { method: 'DELETE' })
@@ -179,6 +180,7 @@ export default function EditShortsBriefPage() {
   }
 
   const isLocked = brief!.status !== 'draft'
+  const canDelete = brief!.status !== 'rendering'
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
@@ -383,7 +385,7 @@ export default function EditShortsBriefPage() {
 
       {/* Actions */}
       <div className="flex items-center justify-between pb-8">
-        {!isLocked && (
+        {canDelete && (
           <Button
             variant="danger"
             size="sm"

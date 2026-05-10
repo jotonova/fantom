@@ -69,7 +69,7 @@ export default function ShortsBriefsPage() {
   }
 
   async function handleDelete(brief: ShortsBrief) {
-    if (!confirm(`Delete "${brief.title}"? This cannot be undone.`)) return
+    if (!confirm(`Delete brief "${brief.title}"? This will permanently remove the brief and any rendered output. Cannot be undone.`)) return
     setDeleting(brief.id)
     try {
       await apiFetch(`/shorts-briefs/${brief.id}`, { method: 'DELETE' })
@@ -178,7 +178,7 @@ export default function ShortsBriefsPage() {
                           {brief.status === 'rendering' ? 'Watch' : 'View Render'}
                         </Button>
                       )}
-                      {brief.status === 'draft' && (
+                      {brief.status !== 'rendering' && (
                         <Button
                           variant="danger"
                           size="sm"

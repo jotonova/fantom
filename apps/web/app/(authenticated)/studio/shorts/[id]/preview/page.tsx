@@ -113,6 +113,7 @@ export default function PreviewPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [transitioning, setTransitioning] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
   async function load() {
@@ -155,6 +156,20 @@ export default function PreviewPage() {
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Failed to start render')
       setGenerating(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!data) return
+    const title = data.brief.title || 'this brief'
+    if (!window.confirm(`Delete brief "${title}"? This will permanently remove the brief and any rendered output. Cannot be undone.`)) return
+    setDeleting(true)
+    try {
+      await apiFetch(`/shorts-briefs/${id}`, { method: 'DELETE' })
+      router.push('/studio/shorts')
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'Delete failed')
+      setDeleting(false)
     }
   }
 
@@ -414,6 +429,16 @@ export default function PreviewPage() {
             >
               Edit Brief
             </Button>
+            {brief.status !== 'rendering' && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </Button>
+            )}
             {brief.status === 'ready' && (
               <Button
                 variant="ghost"

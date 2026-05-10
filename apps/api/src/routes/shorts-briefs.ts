@@ -3,7 +3,7 @@ import fp from 'fastify-plugin'
 import type { FastifyPluginAsync } from 'fastify'
 import { db, shortsBriefs, shortsRenders, assets, brandKits, voiceClones } from '@fantom/db'
 import type { ShortsBrief, ShortsRender } from '@fantom/db'
-import { getPublicUrl } from '@fantom/storage'
+import { getPublicUrl, deleteObject } from '@fantom/storage'
 import { enqueueShortsBriefRender } from '@fantom/jobs'
 import {
   validateBriefForReady,
@@ -578,6 +578,8 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
   })
 
   // DELETE /shorts-briefs/:id ───────────────────────────────────────────────────
+  // Allowed from any status except 'rendering' (would orphan an in-flight job).
+  // Also cleans up rendered output assets from R2 on delete.
   fastify.delete<{ Params: { id: string } }>(
     '/shorts-briefs/:id',
     { preHandler: requireAuth },
@@ -596,16 +598,62 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       })
 
       if (!existing) return reply.code(404).send({ error: 'Brief not found' })
-      if (existing.status !== 'draft') {
+      if (existing.status === 'rendering') {
         return reply.code(409).send({
-          error: `Only draft briefs can be deleted (current status: ${existing.status})`,
+          error: 'Cannot delete brief while rendering — cancel the render first',
         })
       }
 
+      // Collect output asset IDs from all renders before deletion
+      const renderRows = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+        return tx
+          .select({ outputAssetId: shortsRenders.outputAssetId })
+          .from(shortsRenders)
+          .where(eq(shortsRenders.briefId, id))
+      })
+
+      const outputAssetIds = renderRows
+        .map((r) => r.outputAssetId)
+        .filter((assetId): assetId is string => assetId != null)
+
+      // Fetch r2Keys for output assets so we can clean up R2 after DB delete
+      let outputAssets: Array<{ id: string; r2Key: string }> = []
+      if (outputAssetIds.length > 0) {
+        outputAssets = await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+          return tx
+            .select({ id: assets.id, r2Key: assets.r2Key })
+            .from(assets)
+            .where(inArray(assets.id, outputAssetIds))
+        })
+      }
+
+      // Delete brief — cascades to shorts_renders (FK ON DELETE CASCADE)
       await db.transaction(async (tx) => {
         await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
         await tx.delete(shortsBriefs).where(eq(shortsBriefs.id, id))
       })
+
+      // Delete output asset records (shorts_renders.output_asset_id is SET NULL, not CASCADE)
+      if (outputAssets.length > 0) {
+        await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+          await tx
+            .delete(assets)
+            .where(inArray(assets.id, outputAssets.map((a) => a.id)))
+        })
+
+        // Delete R2 objects — fail-soft: orphaned objects are recoverable
+        for (const asset of outputAssets) {
+          deleteObject(asset.r2Key).catch((err) => {
+            fastify.log.error(
+              { err, r2Key: asset.r2Key, briefId: id },
+              '[brief-delete] R2 cleanup failed — object orphaned',
+            )
+          })
+        }
+      }
 
       return reply.code(204).send()
     },

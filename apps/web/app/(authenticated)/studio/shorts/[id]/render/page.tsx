@@ -8,6 +8,7 @@ import { Badge, Button, Spinner } from '@fantom/ui'
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type RenderStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+type BriefStatus = 'draft' | 'ready' | 'rendering' | 'rendered' | 'failed'
 
 interface ShortsRender {
   id: string
@@ -53,9 +54,11 @@ export default function RenderStatusPage() {
 
   const [render, setRender] = useState<ShortsRender | null>(null)
   const [briefTitle, setBriefTitle] = useState<string>('')
+  const [briefStatus, setBriefStatus] = useState<BriefStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState(false)
   const [unlocking, setUnlocking] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const loadRender = useCallback(async () => {
     try {
@@ -71,10 +74,13 @@ export default function RenderStatusPage() {
     }
   }, [id, router])
 
-  // Initial data load
+  // Initial data load — fetch full brief for title + status
   useEffect(() => {
-    apiFetch<{ title: string }>(`/shorts-briefs/${id}`)
-      .then((b) => setBriefTitle(b.title))
+    apiFetch<{ title: string; status: BriefStatus }>(`/shorts-briefs/${id}`)
+      .then((b) => {
+        setBriefTitle(b.title)
+        setBriefStatus(b.status)
+      })
       .catch(() => {})
     loadRender()
   }, [id, loadRender])
@@ -111,6 +117,19 @@ export default function RenderStatusPage() {
     }
   }
 
+  async function handleDelete() {
+    const title = briefTitle || 'this brief'
+    if (!window.confirm(`Delete brief "${title}"? This will permanently remove the brief and any rendered output. Cannot be undone.`)) return
+    setDeleting(true)
+    try {
+      await apiFetch(`/shorts-briefs/${id}`, { method: 'DELETE' })
+      router.push('/studio/shorts')
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Delete failed')
+      setDeleting(false)
+    }
+  }
+
   // ── Loading / error states ────────────────────────────────────────────────
 
   if (!render && !error) {
@@ -134,6 +153,14 @@ export default function RenderStatusPage() {
   const r = render!
   const cfg = STATUS_CONFIG[r.status]
   const isActive = ACTIVE_STATUSES.has(r.status)
+
+  // Try Again: only when render is terminal AND brief is actually in a retryable state
+  const canTryAgain =
+    (r.status === 'failed' || r.status === 'cancelled') &&
+    briefStatus !== 'rendering'
+
+  // Delete: allowed when render is terminal (not queued/running)
+  const canDelete = !isActive
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 px-4 py-8">
@@ -206,7 +233,7 @@ export default function RenderStatusPage() {
         <div className="flex items-center gap-4 rounded-fantom border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <Spinner size="sm" />
           <span className="flex-1 text-sm text-amber-300">
-            {r.status === 'queued' ? 'Waiting in queue…' : 'Rendering placeholder video…'}
+            {r.status === 'queued' ? 'Waiting in queue…' : 'Rendering video…'}
           </span>
           <Button
             variant="ghost"
@@ -222,7 +249,7 @@ export default function RenderStatusPage() {
       {/* Completed: video player */}
       {r.status === 'completed' && r.outputUrl && (
         <div className="space-y-2">
-          <p className="text-xs text-fantom-text-muted">Placeholder output</p>
+          <p className="text-xs text-fantom-text-muted">Rendered output</p>
           <video
             src={r.outputUrl}
             controls
@@ -249,32 +276,46 @@ export default function RenderStatusPage() {
 
       {/* Footer actions */}
       <div className="flex items-center justify-between pb-8">
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => router.push(`/studio/shorts/${id}/preview`)}
-        >
-          Back to Preview
-        </Button>
-        {(r.status === 'failed' || r.status === 'cancelled') && (
+        <div className="flex items-center gap-2">
           <Button
-            variant="primary"
+            variant="secondary"
             size="sm"
-            onClick={handleTryAgain}
-            disabled={unlocking}
+            onClick={() => router.push(`/studio/shorts/${id}/preview`)}
           >
-            {unlocking ? 'Resetting…' : 'Try Again'}
+            Back to Preview
           </Button>
-        )}
-        {r.status === 'completed' && (
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => router.push('/studio/shorts')}
-          >
-            Back to Briefs
-          </Button>
-        )}
+          {canDelete && (
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {canTryAgain && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleTryAgain}
+              disabled={unlocking}
+            >
+              {unlocking ? 'Resetting…' : 'Try Again'}
+            </Button>
+          )}
+          {r.status === 'completed' && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => router.push('/studio/shorts')}
+            >
+              Back to Briefs
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )
