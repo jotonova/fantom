@@ -20,8 +20,10 @@ interface ShortsBrief {
   title: string
   durationSeconds: number
   opening: string | null
+  openingVoiceoverScript: string | null
   mainScenes: Scene[] | null
   closing: string | null
+  closingVoiceoverScript: string | null
   pacing: 'fast' | 'medium' | 'slow' | null
   sourceAssetIds: string[]
   brandKitId: string | null
@@ -279,10 +281,17 @@ export default function PreviewPage() {
             </div>
           </div>
 
-          {brief.opening && (
+          {(brief.opening || brief.openingVoiceoverScript) && (
             <div>
               <span className="block text-xs text-fantom-text-muted">Opening</span>
-              <p className="mt-0.5 line-clamp-2 text-fantom-text">{brief.opening}</p>
+              {brief.opening && (
+                <p className="mt-0.5 line-clamp-2 text-fantom-text">{brief.opening}</p>
+              )}
+              {brief.openingVoiceoverScript && (
+                <p className="mt-0.5 text-xs italic text-fantom-text-muted/70 line-clamp-2">
+                  VO: "{brief.openingVoiceoverScript}"
+                </p>
+              )}
             </div>
           )}
           {brief.mainScenes && brief.mainScenes.length > 0 && (
@@ -307,10 +316,17 @@ export default function PreviewPage() {
               </ol>
             </div>
           )}
-          {brief.closing && (
+          {(brief.closing || brief.closingVoiceoverScript) && (
             <div>
               <span className="block text-xs text-fantom-text-muted">Closing CTA</span>
-              <p className="mt-0.5 line-clamp-2 text-fantom-text">{brief.closing}</p>
+              {brief.closing && (
+                <p className="mt-0.5 line-clamp-2 text-fantom-text">{brief.closing}</p>
+              )}
+              {brief.closingVoiceoverScript && (
+                <p className="mt-0.5 text-xs italic text-fantom-text-muted/70 line-clamp-2">
+                  VO: "{brief.closingVoiceoverScript}"
+                </p>
+              )}
             </div>
           )}
         </CardContent>

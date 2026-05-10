@@ -21,8 +21,10 @@ interface ShortsBrief {
   title: string
   durationSeconds: number
   opening: string | null
+  openingVoiceoverScript: string | null
   mainScenes: Scene[] | null
   closing: string | null
+  closingVoiceoverScript: string | null
   pacing: 'fast' | 'medium' | 'slow' | null
   sourceAssetIds: string[]
   brandKitId: string | null
@@ -147,8 +149,10 @@ export default function EditShortsBriefPage() {
   const [durationSeconds, setDurationSeconds] = useState<15 | 30 | 45 | 60>(30)
   const [pacing, setPacing] = useState<'fast' | 'medium' | 'slow' | ''>('')
   const [opening, setOpening] = useState('')
+  const [openingVoiceoverScript, setOpeningVoiceoverScript] = useState('')
   const [scenes, setScenes] = useState<Scene[]>([makeScene(0)])
   const [closing, setClosing] = useState('')
+  const [closingVoiceoverScript, setClosingVoiceoverScript] = useState('')
   const [sourceAssetIds, setSourceAssetIds] = useState<string[]>([])
   const [brandKitId, setBrandKitId] = useState<string>('')
   const [voiceCloneId, setVoiceCloneId] = useState<string>('')
@@ -171,12 +175,14 @@ export default function EditShortsBriefPage() {
         setDurationSeconds(b.durationSeconds as 15 | 30 | 45 | 60)
         setPacing(b.pacing ?? '')
         setOpening(b.opening ?? '')
+        setOpeningVoiceoverScript(b.openingVoiceoverScript ?? '')
         setScenes(
           b.mainScenes && b.mainScenes.length > 0
             ? b.mainScenes.map(apiSceneToLocal)
             : [makeScene(0)],
         )
         setClosing(b.closing ?? '')
+        setClosingVoiceoverScript(b.closingVoiceoverScript ?? '')
         setSourceAssetIds(b.sourceAssetIds)
         setBrandKitId(b.brandKitId ?? '')
         setVoiceCloneId(b.voiceCloneId ?? '')
@@ -231,8 +237,10 @@ export default function EditShortsBriefPage() {
           durationSeconds,
           pacing: pacing || null,
           opening: opening || null,
+          openingVoiceoverScript: openingVoiceoverScript || null,
           mainScenes,
           closing: closing || null,
+          closingVoiceoverScript: closingVoiceoverScript || null,
           sourceAssetIds,
           brandKitId: brandKitId || null,
           voiceCloneId: voiceCloneId || null,
@@ -400,7 +408,7 @@ export default function EditShortsBriefPage() {
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="opening">Opening hook</Label>
-            <p className="text-xs text-fantom-text-muted">What grabs attention in the first 3 seconds?</p>
+            <p className="text-xs text-fantom-text-muted">What grabs attention in the first 3 seconds? (direction for the editor)</p>
             <textarea
               id="opening"
               value={opening}
@@ -408,6 +416,22 @@ export default function EditShortsBriefPage() {
               disabled={isLocked}
               rows={2}
               maxLength={2000}
+              className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="openingVO">
+              Opening voiceover <span className="text-fantom-text-muted font-normal">(optional)</span>
+            </Label>
+            <textarea
+              id="openingVO"
+              value={openingVoiceoverScript}
+              onChange={(e) => setOpeningVoiceoverScript(e.target.value)}
+              disabled={isLocked}
+              rows={2}
+              maxLength={5000}
+              placeholder="What the voice says at the very start of the video…"
               className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>
@@ -444,7 +468,7 @@ export default function EditShortsBriefPage() {
 
           <div className="space-y-1.5">
             <Label htmlFor="closing">Closing CTA</Label>
-            <p className="text-xs text-fantom-text-muted">What should the viewer do or feel at the end?</p>
+            <p className="text-xs text-fantom-text-muted">What should the viewer do or feel at the end? (direction for the editor)</p>
             <textarea
               id="closing"
               value={closing}
@@ -452,6 +476,22 @@ export default function EditShortsBriefPage() {
               disabled={isLocked}
               rows={2}
               maxLength={2000}
+              className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="closingVO">
+              Closing voiceover <span className="text-fantom-text-muted font-normal">(optional)</span>
+            </Label>
+            <textarea
+              id="closingVO"
+              value={closingVoiceoverScript}
+              onChange={(e) => setClosingVoiceoverScript(e.target.value)}
+              disabled={isLocked}
+              rows={2}
+              maxLength={5000}
+              placeholder="What the voice says at the very end of the video…"
               className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>

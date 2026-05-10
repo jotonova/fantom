@@ -20,10 +20,11 @@ export type CreateShortsBriefParams = Pick<
       | 'voiceCloneId'
       | 'durationSeconds'
       | 'opening'
+      | 'openingVoiceoverScript'
       | 'closing'
+      | 'closingVoiceoverScript'
       | 'pacing'
       | 'mainScenes'
-      | 'voiceoverScripts'
     >
   >
 
@@ -37,10 +38,11 @@ export type UpdateShortsBriefParams = Partial<
     | 'durationSeconds'
     | 'sourceAssetIds'
     | 'opening'
+    | 'openingVoiceoverScript'
     | 'closing'
+    | 'closingVoiceoverScript'
     | 'pacing'
     | 'mainScenes'
-    | 'voiceoverScripts'
     | 'status'
     | 'errorMessage'
   >

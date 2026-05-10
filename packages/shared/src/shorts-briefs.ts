@@ -29,7 +29,9 @@ export const CreateShortsBriefSchema = z.object({
   voiceCloneId: z.string().optional(),
   durationSeconds: z.union([z.literal(15), z.literal(30), z.literal(45), z.literal(60)]).default(30),
   opening: z.string().max(2000).optional(),
+  openingVoiceoverScript: z.string().max(5000).nullable().optional(),
   closing: z.string().max(2000).optional(),
+  closingVoiceoverScript: z.string().max(5000).nullable().optional(),
   pacing: z.enum(BRIEF_PACINGS).optional(),
   mainScenes: z.array(SceneSchema).nullable().optional(),
 })
@@ -42,7 +44,9 @@ export const UpdateShortsBriefSchema = z.object({
   voiceCloneId: z.string().nullable().optional(),
   durationSeconds: z.union([z.literal(15), z.literal(30), z.literal(45), z.literal(60)]).optional(),
   opening: z.string().max(2000).nullable().optional(),
+  openingVoiceoverScript: z.string().max(5000).nullable().optional(),
   closing: z.string().max(2000).nullable().optional(),
+  closingVoiceoverScript: z.string().max(5000).nullable().optional(),
   pacing: z.enum(BRIEF_PACINGS).nullable().optional(),
   mainScenes: z.array(SceneSchema).nullable().optional(),
   status: z.enum(BRIEF_STATUSES).optional(),
@@ -59,8 +63,10 @@ export interface BriefForValidation {
   voiceCloneId: string | null
   brandKitId: string | null
   opening: string | null
+  openingVoiceoverScript: string | null
   mainScenes: Array<{ id: string; description: string; voiceover_script?: string }> | null
   closing: string | null
+  closingVoiceoverScript: string | null
   durationSeconds: number
 }
 
@@ -106,14 +112,18 @@ export function validateBriefForReady(
     }
   }
 
-  // Voice / script consistency
+  // Voice / script consistency — check all VO fields
   const hasVoice = Boolean(brief.voiceCloneId)
-  const hasVO = brief.mainScenes?.some((s) => Boolean(s.voiceover_script?.trim())) ?? false
+  const hasVO =
+    Boolean(brief.openingVoiceoverScript?.trim()) ||
+    (brief.mainScenes?.some((s) => Boolean(s.voiceover_script?.trim())) ?? false) ||
+    Boolean(brief.closingVoiceoverScript?.trim())
+
   if (hasVoice && !hasVO) {
-    warnings.push('Voice selected but no voiceover scripts in any scene — VO will be skipped.')
+    warnings.push('Voice selected but no voiceover scripts — VO will be skipped.')
   }
   if (hasVO && !hasVoice) {
-    warnings.push('Voiceover scripts present in scenes but no voice selected — scripts will be ignored.')
+    warnings.push('Voiceover scripts present but no voice selected — scripts will be ignored.')
   }
 
   // Brand kit
@@ -124,8 +134,10 @@ export function validateBriefForReady(
   // Brief content empty
   const hasContent =
     brief.opening?.trim() ||
+    brief.openingVoiceoverScript?.trim() ||
     (brief.mainScenes && brief.mainScenes.length > 0) ||
-    brief.closing?.trim()
+    brief.closing?.trim() ||
+    brief.closingVoiceoverScript?.trim()
   if (!hasContent) {
     warnings.push('Brief is empty — add an opening, scenes, or closing to guide the AI.')
   }
@@ -142,7 +154,6 @@ export const ELEVENLABS_USD_PER_1K_CHARS = 0.30
  * Rough estimate: Render Standard 2GB ≈ $0.0167/hr idle; during active render
  * assume ~2× for CPU headroom → $0.033/hr ÷ 60 min ≈ $0.0006/min wall-clock.
  * Rounded up generously since this is a user-facing display figure, not billing.
- * TODO: calibrate against actual render telemetry.
  */
 export const RENDER_USD_PER_MINUTE = 0.02
 
@@ -155,12 +166,12 @@ export interface CostEstimate {
 
 /** Pure cost estimation — reused by API (preview endpoint) and UI. */
 export function estimateBriefCost(brief: BriefForValidation): CostEstimate {
-  // Count chars from all voiceover_script fields in scenes, plus opening/closing
-  // (opening and closing are also voiced when a voice is selected)
+  // Count only the VO script texts — the fields that actually get synthesized to speech.
+  // Descriptive text (opening, closing direction) is not voiced.
   const voTexts = [
-    brief.opening,
+    brief.openingVoiceoverScript,
     ...(brief.mainScenes ?? []).map((s) => s.voiceover_script).filter(Boolean),
-    brief.closing,
+    brief.closingVoiceoverScript,
   ].filter(Boolean) as string[]
 
   const voCharCount = voTexts.join(' ').length

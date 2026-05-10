@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { apiFetch, ApiError } from '../../../../../src/lib/api-client'
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Spinner } from '@fantom/ui'
@@ -107,8 +107,10 @@ export default function NewShortsBriefPage() {
   const [durationSeconds, setDurationSeconds] = useState<15 | 30 | 45 | 60>(30)
   const [pacing, setPacing] = useState<'fast' | 'medium' | 'slow' | ''>('')
   const [opening, setOpening] = useState('')
+  const [openingVoiceoverScript, setOpeningVoiceoverScript] = useState('')
   const [scenes, setScenes] = useState<Scene[]>([makeScene(0)])
   const [closing, setClosing] = useState('')
+  const [closingVoiceoverScript, setClosingVoiceoverScript] = useState('')
   const [sourceAssetIds, setSourceAssetIds] = useState<string[]>([])
   const [brandKitId, setBrandKitId] = useState<string>('')
   const [voiceCloneId, setVoiceCloneId] = useState<string>('')
@@ -174,8 +176,10 @@ export default function NewShortsBriefPage() {
           durationSeconds,
           pacing: pacing || null,
           opening: opening || null,
+          openingVoiceoverScript: openingVoiceoverScript || null,
           mainScenes,
           closing: closing || null,
+          closingVoiceoverScript: closingVoiceoverScript || null,
           sourceAssetIds,
           brandKitId: brandKitId || null,
           voiceCloneId: voiceCloneId || null,
@@ -275,7 +279,7 @@ export default function NewShortsBriefPage() {
           <div className="space-y-1.5">
             <Label htmlFor="opening">Opening hook</Label>
             <p className="text-xs text-fantom-text-muted">
-              What grabs attention in the first 3 seconds?
+              What grabs attention in the first 3 seconds? (direction for the editor)
             </p>
             <textarea
               id="opening"
@@ -284,6 +288,21 @@ export default function NewShortsBriefPage() {
               rows={2}
               maxLength={2000}
               placeholder="e.g. Pan across the pool at golden hour while music swells…"
+              className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="openingVO">
+              Opening voiceover <span className="text-fantom-text-muted font-normal">(optional)</span>
+            </Label>
+            <textarea
+              id="openingVO"
+              value={openingVoiceoverScript}
+              onChange={(e) => setOpeningVoiceoverScript(e.target.value)}
+              rows={2}
+              maxLength={5000}
+              placeholder="What the voice says at the very start of the video…"
               className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
             />
           </div>
@@ -321,7 +340,7 @@ export default function NewShortsBriefPage() {
           <div className="space-y-1.5">
             <Label htmlFor="closing">Closing CTA</Label>
             <p className="text-xs text-fantom-text-muted">
-              What should the viewer do or feel at the end?
+              What should the viewer do or feel at the end? (direction for the editor)
             </p>
             <textarea
               id="closing"
@@ -330,6 +349,21 @@ export default function NewShortsBriefPage() {
               rows={2}
               maxLength={2000}
               placeholder="e.g. Book a showing today — link in bio."
+              className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="closingVO">
+              Closing voiceover <span className="text-fantom-text-muted font-normal">(optional)</span>
+            </Label>
+            <textarea
+              id="closingVO"
+              value={closingVoiceoverScript}
+              onChange={(e) => setClosingVoiceoverScript(e.target.value)}
+              rows={2}
+              maxLength={5000}
+              placeholder="What the voice says at the very end of the video…"
               className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
             />
           </div>

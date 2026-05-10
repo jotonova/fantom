@@ -35,8 +35,10 @@ function toBriefForValidation(brief: ShortsBrief): BriefForValidation {
     voiceCloneId: brief.voiceCloneId,
     brandKitId: brief.brandKitId,
     opening: brief.opening,
+    openingVoiceoverScript: brief.openingVoiceoverScript,
     mainScenes: Array.isArray(brief.mainScenes) ? brief.mainScenes : null,
     closing: brief.closing,
+    closingVoiceoverScript: brief.closingVoiceoverScript,
     durationSeconds: brief.durationSeconds,
   }
 }
@@ -54,7 +56,9 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       voiceCloneId?: string | null
       durationSeconds?: number
       opening?: string | null
+      openingVoiceoverScript?: string | null
       closing?: string | null
+      closingVoiceoverScript?: string | null
       pacing?: string | null
       mainScenes?: Array<{ id: string; description: string; voiceover_script?: string }> | null
     }
@@ -92,7 +96,9 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
           voiceCloneId: body.voiceCloneId ?? null,
           durationSeconds,
           opening: body.opening ?? null,
+          openingVoiceoverScript: body.openingVoiceoverScript ?? null,
           closing: body.closing ?? null,
+          closingVoiceoverScript: body.closingVoiceoverScript ?? null,
           pacing: (body.pacing as ShortsBrief['pacing']) ?? null,
           mainScenes: Array.isArray(body.mainScenes) ? body.mainScenes : null,
           status: 'draft',
@@ -436,7 +442,9 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       voiceCloneId?: string | null
       durationSeconds?: number
       opening?: string | null
+      openingVoiceoverScript?: string | null
       closing?: string | null
+      closingVoiceoverScript?: string | null
       pacing?: string | null
       mainScenes?: Array<{ id: string; description: string; voiceover_script?: string }> | null
       status?: string
@@ -541,7 +549,9 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
         patch.durationSeconds = body.durationSeconds
       }
       if ('opening' in body) patch.opening = body.opening ?? null
+      if ('openingVoiceoverScript' in body) patch.openingVoiceoverScript = body.openingVoiceoverScript ?? null
       if ('closing' in body) patch.closing = body.closing ?? null
+      if ('closingVoiceoverScript' in body) patch.closingVoiceoverScript = body.closingVoiceoverScript ?? null
       if ('pacing' in body) {
         if (body.pacing !== null && body.pacing !== undefined && !VALID_PACINGS.has(body.pacing)) {
           return reply.code(400).send({ error: 'pacing must be fast, medium, or slow' })

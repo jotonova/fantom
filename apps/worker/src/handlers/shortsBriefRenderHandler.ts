@@ -134,10 +134,25 @@ export async function handleShortsBriefRender(
 
     let finalOutputPath = assembly.outputPath
 
-    const scenes = Array.isArray(brief.mainScenes) ? (brief.mainScenes as Array<{ id: string; description: string; voiceover_script?: string }>) : []
-    const voScenes = scenes
-      .filter((s) => typeof s.voiceover_script === 'string' && s.voiceover_script.trim())
-      .map((s) => ({ id: s.id, voiceover_script: s.voiceover_script! }))
+    const scenes = Array.isArray(brief.mainScenes)
+      ? (brief.mainScenes as Array<{ id: string; description: string; voiceover_script?: string }>)
+      : []
+
+    // Collect all VO segments in playback order:
+    //   1. Opening VO (if present) → plays at video start
+    //   2. Per-scene VOs in order  → play over body of video
+    //   3. Closing VO (if present) → plays at video end
+    const voScenes = [
+      ...(brief.openingVoiceoverScript?.trim()
+        ? [{ id: 'opening', voiceover_script: brief.openingVoiceoverScript }]
+        : []),
+      ...scenes
+        .filter((s) => typeof s.voiceover_script === 'string' && s.voiceover_script.trim())
+        .map((s) => ({ id: s.id, voiceover_script: s.voiceover_script! })),
+      ...(brief.closingVoiceoverScript?.trim()
+        ? [{ id: 'closing', voiceover_script: brief.closingVoiceoverScript }]
+        : []),
+    ]
 
     if (brief.voiceCloneId && voScenes.length > 0) {
       await checkCancelled(renderId, tenantId)

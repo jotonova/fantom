@@ -36,7 +36,9 @@ export const shortsBriefs = pgTable(
 
     // Creative brief content (nullable — user-written, AI-refined in later phases)
     opening: text('opening'),
+    openingVoiceoverScript: text('opening_voiceover_script'), // spoken VO for the opening hook
     closing: text('closing'),
+    closingVoiceoverScript: text('closing_voiceover_script'), // spoken VO for the closing CTA
     pacing: text('pacing').$type<'fast' | 'medium' | 'slow'>(),
 
     // Scene list — each scene has a description and optional voiceover script.
