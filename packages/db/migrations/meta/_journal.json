@@ -183,6 +183,20 @@
       "when": 1778500000000,
       "tag": "0025_shorts_renders",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1778600000000,
+      "tag": "0026_scenes_voiceover",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1778600001000,
+      "tag": "0027_opening_closing_vo",
+      "breakpoints": true
     }
   ]
 }
