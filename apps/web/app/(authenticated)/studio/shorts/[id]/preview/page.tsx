@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { apiFetch, ApiError } from '../../../../../../src/lib/api-client'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Spinner } from '@fantom/ui'
@@ -116,16 +116,23 @@ export default function PreviewPage() {
   const [deleting, setDeleting] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const r = await apiFetch<PreviewData>(`/shorts-briefs/${id}/preview`)
       setData(r)
     } catch (err) {
       setLoadError(err instanceof ApiError && err.status === 404 ? 'Brief not found' : 'Failed to load preview')
     }
-  }
+  }, [id])
 
-  useEffect(() => { load() }, [id])
+  useEffect(() => { load() }, [load])
+
+  // Poll every 3s while rendering so status change is reflected without manual refresh
+  useEffect(() => {
+    if (data?.brief.status !== 'rendering') return
+    const t = setInterval(load, 3_000)
+    return () => clearInterval(t)
+  }, [data?.brief.status, load])
 
   async function handleMarkReady() {
     if (!data) return
