@@ -9,13 +9,18 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Spinner } from
 
 type BriefStatus = 'draft' | 'ready' | 'rendering' | 'rendered' | 'failed'
 
+interface Scene {
+  id: string
+  description: string
+  voiceover_script?: string
+}
+
 interface ShortsBrief {
   id: string
   title: string
   durationSeconds: number
   opening: string | null
-  mainScenes: string | null
-  voiceoverScripts: string | null
+  mainScenes: Scene[] | null
   closing: string | null
   pacing: 'fast' | 'medium' | 'slow' | null
   sourceAssetIds: string[]
@@ -280,16 +285,32 @@ export default function PreviewPage() {
               <p className="mt-0.5 line-clamp-2 text-fantom-text">{brief.opening}</p>
             </div>
           )}
+          {brief.mainScenes && brief.mainScenes.length > 0 && (
+            <div>
+              <span className="block text-xs text-fantom-text-muted">
+                Scenes ({brief.mainScenes.length})
+              </span>
+              <ol className="mt-1 space-y-1.5">
+                {brief.mainScenes.map((scene, i) => (
+                  <li key={scene.id} className="text-sm">
+                    <span className="text-fantom-text-muted mr-1">{i + 1}.</span>
+                    <span className="text-fantom-text">{scene.description}</span>
+                    {scene.voiceover_script && (
+                      <span className="ml-1.5 text-xs italic text-fantom-text-muted/70">
+                        "{scene.voiceover_script.length > 80
+                          ? scene.voiceover_script.slice(0, 80) + '…'
+                          : scene.voiceover_script}"
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
           {brief.closing && (
             <div>
               <span className="block text-xs text-fantom-text-muted">Closing CTA</span>
               <p className="mt-0.5 line-clamp-2 text-fantom-text">{brief.closing}</p>
-            </div>
-          )}
-          {brief.mainScenes && (
-            <div>
-              <span className="block text-xs text-fantom-text-muted">Main Scenes</span>
-              <p className="mt-0.5 line-clamp-3 text-fantom-text">{brief.mainScenes}</p>
             </div>
           )}
         </CardContent>
@@ -390,7 +411,7 @@ export default function PreviewPage() {
               <span className="font-semibold text-fantom-text">{fmtUsd(estimates.totalUsd)}</span>
             </div>
             <p className="pt-1 text-xs text-fantom-text-muted">
-              Estimates are approximate. Rates will be calibrated in 1B.5 after first renders.
+              Estimates are approximate. VO cost counts voiceover script characters across all scenes.
             </p>
           </div>
         </CardContent>

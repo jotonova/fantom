@@ -10,13 +10,18 @@ import { SourceClipPicker } from '../../_components/SourceClipPicker'
 
 type BriefStatus = 'draft' | 'ready' | 'rendering' | 'rendered' | 'failed'
 
+interface Scene {
+  id: string
+  description: string
+  voiceover_script: string
+}
+
 interface ShortsBrief {
   id: string
   title: string
   durationSeconds: number
   opening: string | null
-  mainScenes: string | null
-  voiceoverScripts: string | null
+  mainScenes: Scene[] | null
   closing: string | null
   pacing: 'fast' | 'medium' | 'slow' | null
   sourceAssetIds: string[]
@@ -52,6 +57,81 @@ const STATUS_VARIANTS: Record<BriefStatus, 'neutral' | 'success' | 'warning' | '
   failed: 'danger',
 }
 
+// ── Scene helpers ─────────────────────────────────────────────────────────────
+
+function makeScene(index: number): Scene {
+  return { id: `scene-${index + 1}`, description: '', voiceover_script: '' }
+}
+
+function apiSceneToLocal(s: { id: string; description: string; voiceover_script?: string }): Scene {
+  return { id: s.id, description: s.description, voiceover_script: s.voiceover_script ?? '' }
+}
+
+function SceneBlock({
+  scene,
+  index,
+  total,
+  disabled,
+  onChange,
+  onRemove,
+}: {
+  scene: Scene
+  index: number
+  total: number
+  disabled: boolean
+  onChange: (updated: Scene) => void
+  onRemove: () => void
+}) {
+  return (
+    <div className="rounded-fantom border border-fantom-steel-border bg-fantom-steel/20 p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-fantom-text-muted uppercase tracking-wide">
+          Scene {index + 1}
+        </span>
+        {total > 1 && !disabled && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-xs text-fantom-text-muted hover:text-red-400 transition-colors"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor={`scene-${scene.id}-desc`}>Description</Label>
+        <textarea
+          id={`scene-${scene.id}-desc`}
+          value={scene.description}
+          onChange={(e) => onChange({ ...scene, description: e.target.value })}
+          disabled={disabled}
+          rows={2}
+          maxLength={2000}
+          placeholder="What happens in this scene? What should the camera show?"
+          className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor={`scene-${scene.id}-vo`}>
+          Voiceover script <span className="text-fantom-text-muted font-normal">(optional)</span>
+        </Label>
+        <textarea
+          id={`scene-${scene.id}-vo`}
+          value={scene.voiceover_script}
+          onChange={(e) => onChange({ ...scene, voiceover_script: e.target.value })}
+          disabled={disabled}
+          rows={2}
+          maxLength={5000}
+          placeholder="What should be said during this scene?"
+          className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+    </div>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function EditShortsBriefPage() {
@@ -67,8 +147,7 @@ export default function EditShortsBriefPage() {
   const [durationSeconds, setDurationSeconds] = useState<15 | 30 | 45 | 60>(30)
   const [pacing, setPacing] = useState<'fast' | 'medium' | 'slow' | ''>('')
   const [opening, setOpening] = useState('')
-  const [mainScenes, setMainScenes] = useState('')
-  const [voiceoverScripts, setVoiceoverScripts] = useState('')
+  const [scenes, setScenes] = useState<Scene[]>([makeScene(0)])
   const [closing, setClosing] = useState('')
   const [sourceAssetIds, setSourceAssetIds] = useState<string[]>([])
   const [brandKitId, setBrandKitId] = useState<string>('')
@@ -92,8 +171,11 @@ export default function EditShortsBriefPage() {
         setDurationSeconds(b.durationSeconds as 15 | 30 | 45 | 60)
         setPacing(b.pacing ?? '')
         setOpening(b.opening ?? '')
-        setMainScenes(b.mainScenes ?? '')
-        setVoiceoverScripts(b.voiceoverScripts ?? '')
+        setScenes(
+          b.mainScenes && b.mainScenes.length > 0
+            ? b.mainScenes.map(apiSceneToLocal)
+            : [makeScene(0)],
+        )
         setClosing(b.closing ?? '')
         setSourceAssetIds(b.sourceAssetIds)
         setBrandKitId(b.brandKitId ?? '')
@@ -112,12 +194,33 @@ export default function EditShortsBriefPage() {
       .catch(() => {})
   }, [id])
 
+  function updateScene(index: number, updated: Scene) {
+    setScenes((prev) => prev.map((s, i) => (i === index ? updated : s)))
+  }
+
+  function removeScene(index: number) {
+    setScenes((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function addScene() {
+    setScenes((prev) => [...prev, makeScene(prev.length)])
+  }
+
   async function handleSave() {
     setSaveError(null)
     setSaved(false)
 
     if (!title.trim()) { setSaveError('Title is required'); return }
     if (sourceAssetIds.length === 0) { setSaveError('Select at least one source clip'); return }
+
+    const validScenes = scenes.filter((s) => s.description.trim())
+    const mainScenes = validScenes.length > 0
+      ? validScenes.map((s) => ({
+          id: s.id,
+          description: s.description.trim(),
+          ...(s.voiceover_script.trim() ? { voiceover_script: s.voiceover_script.trim() } : {}),
+        }))
+      : null
 
     setSaving(true)
     try {
@@ -128,8 +231,7 @@ export default function EditShortsBriefPage() {
           durationSeconds,
           pacing: pacing || null,
           opening: opening || null,
-          mainScenes: mainScenes || null,
-          voiceoverScripts: voiceoverScripts || null,
+          mainScenes,
           closing: closing || null,
           sourceAssetIds,
           brandKitId: brandKitId || null,
@@ -147,8 +249,8 @@ export default function EditShortsBriefPage() {
   }
 
   async function handleDelete() {
-    const title = brief?.title || 'this brief'
-    if (!confirm(`Delete brief "${title}"? This will permanently remove the brief and any rendered output. Cannot be undone.`)) return
+    const briefTitle = brief?.title || 'this brief'
+    if (!confirm(`Delete brief "${briefTitle}"? This will permanently remove the brief and any rendered output. Cannot be undone.`)) return
     setDeleting(true)
     try {
       await apiFetch(`/shorts-briefs/${id}`, { method: 'DELETE' })
@@ -296,26 +398,63 @@ export default function EditShortsBriefPage() {
           <CardTitle>Creative Brief</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {[
-            { id: 'opening', label: 'Opening hook', hint: 'What grabs attention in the first 3 seconds?', value: opening, set: setOpening, rows: 2 },
-            { id: 'mainScenes', label: 'Main scenes', hint: 'Key moments and what each should show.', value: mainScenes, set: setMainScenes, rows: 4 },
-            { id: 'voiceoverScripts', label: 'Voiceover notes', hint: 'Tone, key points, or draft script lines.', value: voiceoverScripts, set: setVoiceoverScripts, rows: 3 },
-            { id: 'closing', label: 'Closing CTA', hint: 'What should the viewer do or feel at the end?', value: closing, set: setClosing, rows: 2 },
-          ].map((field) => (
-            <div key={field.id} className="space-y-1.5">
-              <Label htmlFor={field.id}>{field.label}</Label>
-              {field.hint && <p className="text-xs text-fantom-text-muted">{field.hint}</p>}
-              <textarea
-                id={field.id}
-                value={field.value}
-                onChange={(e) => field.set(e.target.value)}
-                disabled={isLocked}
-                rows={field.rows}
-                maxLength={10000}
-                className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
-              />
+          <div className="space-y-1.5">
+            <Label htmlFor="opening">Opening hook</Label>
+            <p className="text-xs text-fantom-text-muted">What grabs attention in the first 3 seconds?</p>
+            <textarea
+              id="opening"
+              value={opening}
+              onChange={(e) => setOpening(e.target.value)}
+              disabled={isLocked}
+              rows={2}
+              maxLength={2000}
+              className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
+
+          {/* Scene blocks */}
+          <div className="space-y-2">
+            <Label>Main Scenes</Label>
+            <p className="text-xs text-fantom-text-muted">
+              Each scene has a description (what the camera shows) and an optional voiceover script.
+            </p>
+            <div className="space-y-2">
+              {scenes.map((scene, i) => (
+                <SceneBlock
+                  key={scene.id}
+                  scene={scene}
+                  index={i}
+                  total={scenes.length}
+                  disabled={isLocked}
+                  onChange={(updated) => updateScene(i, updated)}
+                  onRemove={() => removeScene(i)}
+                />
+              ))}
             </div>
-          ))}
+            {!isLocked && (
+              <button
+                type="button"
+                onClick={addScene}
+                className="mt-1 text-sm text-fantom-blue hover:underline"
+              >
+                + Add scene
+              </button>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="closing">Closing CTA</Label>
+            <p className="text-xs text-fantom-text-muted">What should the viewer do or feel at the end?</p>
+            <textarea
+              id="closing"
+              value={closing}
+              onChange={(e) => setClosing(e.target.value)}
+              disabled={isLocked}
+              rows={2}
+              maxLength={2000}
+              className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
         </CardContent>
       </Card>
 

@@ -39,9 +39,13 @@ export const shortsBriefs = pgTable(
     closing: text('closing'),
     pacing: text('pacing').$type<'fast' | 'medium' | 'slow'>(),
 
-    // AI-generated content (nullable — populated by brief-planning step)
-    mainScenes: jsonb('main_scenes'),
-    voiceoverScripts: jsonb('voiceover_scripts'),
+    // Scene list — each scene has a description and optional voiceover script.
+    // Shape: Array<{ id: string, description: string, voiceover_script?: string }> | null
+    mainScenes: jsonb('main_scenes').$type<Array<{
+      id: string
+      description: string
+      voiceover_script?: string
+    }>>(),
 
     // Status
     status: text('status')

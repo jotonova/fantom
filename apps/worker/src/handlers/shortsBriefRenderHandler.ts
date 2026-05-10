@@ -6,6 +6,8 @@ import type { ShortsRenderPayload } from '@fantom/jobs'
 import { putObjectFromFile } from '@fantom/storage'
 import { logEvent } from '@fantom/observability'
 import { assembleShortFromBrief } from '../lib/assembleShort.js'
+import { generateVO } from '../lib/generateVO.js'
+import { mixVoiceover } from '../lib/voMix.js'
 import {
   getShortsRenderRow,
   patchShortsRender,
@@ -125,18 +127,54 @@ export async function handleShortsBriefRender(
       () => checkCancelled(renderId, tenantId),
     )
 
+    // ── VO generation + audio mix ─────────────────────────────────────────────
+    // Only runs when a voice is selected AND at least one scene has a VO script.
+
+    const tenantSlug = await getTenantSlug(tenantId)
+
+    let finalOutputPath = assembly.outputPath
+
+    const scenes = Array.isArray(brief.mainScenes) ? (brief.mainScenes as Array<{ id: string; description: string; voiceover_script?: string }>) : []
+    const voScenes = scenes
+      .filter((s) => typeof s.voiceover_script === 'string' && s.voiceover_script.trim())
+      .map((s) => ({ id: s.id, voiceover_script: s.voiceover_script! }))
+
+    if (brief.voiceCloneId && voScenes.length > 0) {
+      await checkCancelled(renderId, tenantId)
+
+      log(`generating VO for ${voScenes.length} scene(s) with voice ${brief.voiceCloneId}`)
+      const voFiles = await generateVO({
+        scenes: voScenes,
+        voiceId: brief.voiceCloneId,
+        tenantSlug,
+        workDir,
+        log,
+      })
+
+      if (voFiles.length > 0) {
+        await checkCancelled(renderId, tenantId)
+
+        log(`mixing ${voFiles.length} VO segment(s) into video`)
+        finalOutputPath = await mixVoiceover({
+          videoPath: assembly.outputPath,
+          voFiles,
+          workDir,
+          log,
+        })
+      }
+    }
+
     // ── Upload to R2 ──────────────────────────────────────────────────────────
 
     await checkCancelled(renderId, tenantId)
 
-    const tenantSlug = await getTenantSlug(tenantId)
     // Deterministic path: makes it easy to find the render output in R2 by renderId
     const r2Key = `${tenantSlug}/shorts-renders/${renderId}/output.mp4`
 
     log(`uploading → ${r2Key}`)
-    await uploadWithRetry(r2Key, assembly.outputPath, 'video/mp4')
+    await uploadWithRetry(r2Key, finalOutputPath, 'video/mp4')
 
-    const { size: sizeBytes } = await stat(assembly.outputPath)
+    const { size: sizeBytes } = await stat(finalOutputPath)
 
     // ── Create asset record ───────────────────────────────────────────────────
     // metadata.source=false is a hard guardrail — never changes for render outputs.
@@ -150,10 +188,11 @@ export async function handleShortsBriefRender(
       metadata: {
         renderId,
         briefId,
-        assemblyVersion: '1B.5',
+        assemblyVersion: '1B.6',
         sourceClipCount: assembly.sourceClipCount,
         targetDurationS: brief.durationSeconds,
         actualDurationS: assembly.actualDurationSeconds,
+        hasVO: voScenes.length > 0 && Boolean(brief.voiceCloneId),
       },
     })
 
@@ -183,10 +222,11 @@ export async function handleShortsBriefRender(
         assetId: asset.id,
         durationMs,
         r2Key,
-        assemblyVersion: '1B.5',
+        assemblyVersion: '1B.6',
         sourceClipCount: assembly.sourceClipCount,
         actualDurationS: assembly.actualDurationSeconds,
         targetDurationS: brief.durationSeconds,
+        hasVO: voScenes.length > 0 && Boolean(brief.voiceCloneId),
       },
     })
 

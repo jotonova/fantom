@@ -1,12 +1,18 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { apiFetch, ApiError } from '../../../../../src/lib/api-client'
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Spinner } from '@fantom/ui'
 import { SourceClipPicker } from '../_components/SourceClipPicker'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+interface Scene {
+  id: string
+  description: string
+  voiceover_script: string
+}
 
 interface BrandKit {
   id: string
@@ -22,6 +28,75 @@ interface VoiceClone {
   providerVoiceId: string | null
 }
 
+// ── Scene helpers ─────────────────────────────────────────────────────────────
+
+function makeScene(index: number): Scene {
+  return { id: `scene-${index + 1}`, description: '', voiceover_script: '' }
+}
+
+function SceneBlock({
+  scene,
+  index,
+  total,
+  disabled,
+  onChange,
+  onRemove,
+}: {
+  scene: Scene
+  index: number
+  total: number
+  disabled: boolean
+  onChange: (updated: Scene) => void
+  onRemove: () => void
+}) {
+  return (
+    <div className="rounded-fantom border border-fantom-steel-border bg-fantom-steel/20 p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-fantom-text-muted uppercase tracking-wide">
+          Scene {index + 1}
+        </span>
+        {total > 1 && !disabled && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-xs text-fantom-text-muted hover:text-red-400 transition-colors"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor={`scene-${scene.id}-desc`}>Description</Label>
+        <textarea
+          id={`scene-${scene.id}-desc`}
+          value={scene.description}
+          onChange={(e) => onChange({ ...scene, description: e.target.value })}
+          disabled={disabled}
+          rows={2}
+          maxLength={2000}
+          placeholder="What happens in this scene? What should the camera show?"
+          className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor={`scene-${scene.id}-vo`}>Voiceover script <span className="text-fantom-text-muted font-normal">(optional)</span></Label>
+        <textarea
+          id={`scene-${scene.id}-vo`}
+          value={scene.voiceover_script}
+          onChange={(e) => onChange({ ...scene, voiceover_script: e.target.value })}
+          disabled={disabled}
+          rows={2}
+          maxLength={5000}
+          placeholder="What should be said during this scene?"
+          className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+    </div>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function NewShortsBriefPage() {
@@ -32,8 +107,7 @@ export default function NewShortsBriefPage() {
   const [durationSeconds, setDurationSeconds] = useState<15 | 30 | 45 | 60>(30)
   const [pacing, setPacing] = useState<'fast' | 'medium' | 'slow' | ''>('')
   const [opening, setOpening] = useState('')
-  const [mainScenes, setMainScenes] = useState('')
-  const [voiceoverScripts, setVoiceoverScripts] = useState('')
+  const [scenes, setScenes] = useState<Scene[]>([makeScene(0)])
   const [closing, setClosing] = useState('')
   const [sourceAssetIds, setSourceAssetIds] = useState<string[]>([])
   const [brandKitId, setBrandKitId] = useState<string>('')
@@ -57,6 +131,18 @@ export default function NewShortsBriefPage() {
       .catch(() => {})
   }, [])
 
+  function updateScene(index: number, updated: Scene) {
+    setScenes((prev) => prev.map((s, i) => (i === index ? updated : s)))
+  }
+
+  function removeScene(index: number) {
+    setScenes((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function addScene() {
+    setScenes((prev) => [...prev, makeScene(prev.length)])
+  }
+
   async function handleSave() {
     setError(null)
 
@@ -69,6 +155,16 @@ export default function NewShortsBriefPage() {
       return
     }
 
+    // Collapse empty scenes — only send scenes with at least a description
+    const validScenes = scenes.filter((s) => s.description.trim())
+    const mainScenes = validScenes.length > 0
+      ? validScenes.map((s) => ({
+          id: s.id,
+          description: s.description.trim(),
+          ...(s.voiceover_script.trim() ? { voiceover_script: s.voiceover_script.trim() } : {}),
+        }))
+      : null
+
     setSaving(true)
     try {
       const brief = await apiFetch<{ id: string }>('/shorts-briefs', {
@@ -78,8 +174,7 @@ export default function NewShortsBriefPage() {
           durationSeconds,
           pacing: pacing || null,
           opening: opening || null,
-          mainScenes: mainScenes || null,
-          voiceoverScripts: voiceoverScripts || null,
+          mainScenes,
           closing: closing || null,
           sourceAssetIds,
           brandKitId: brandKitId || null,
@@ -114,7 +209,7 @@ export default function NewShortsBriefPage() {
         </div>
       )}
 
-      {/* Title */}
+      {/* Title + duration + pacing */}
       <Card>
         <CardHeader>
           <CardTitle>Brief Details</CardTitle>
@@ -133,7 +228,6 @@ export default function NewShortsBriefPage() {
             />
           </div>
 
-          {/* Duration */}
           <div className="space-y-1.5">
             <Label>Duration</Label>
             <div className="flex gap-2">
@@ -155,7 +249,6 @@ export default function NewShortsBriefPage() {
             </div>
           </div>
 
-          {/* Pacing */}
           <div className="space-y-1.5">
             <Label htmlFor="pacing">Pacing</Label>
             <select
@@ -195,36 +288,34 @@ export default function NewShortsBriefPage() {
             />
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="mainScenes">Main scenes</Label>
+          {/* Scene blocks */}
+          <div className="space-y-2">
+            <Label>Main Scenes</Label>
             <p className="text-xs text-fantom-text-muted">
-              Describe the key moments and what each should show.
+              Each scene has a description (what the camera shows) and an optional voiceover script.
             </p>
-            <textarea
-              id="mainScenes"
-              value={mainScenes}
-              onChange={(e) => setMainScenes(e.target.value)}
-              rows={4}
-              maxLength={10000}
-              placeholder="e.g. Kitchen — highlight the island and appliances. Living room — show the fireplace and view. Primary suite — slow pan across the bathroom…"
-              className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="voiceoverScripts">Voiceover notes</Label>
-            <p className="text-xs text-fantom-text-muted">
-              Key points, tone, or draft script lines for the AI.
-            </p>
-            <textarea
-              id="voiceoverScripts"
-              value={voiceoverScripts}
-              onChange={(e) => setVoiceoverScripts(e.target.value)}
-              rows={3}
-              maxLength={10000}
-              placeholder="e.g. Warm and confident tone. Mention the price, location, and open house date. End with a call to action."
-              className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue"
-            />
+            <div className="space-y-2">
+              {scenes.map((scene, i) => (
+                <SceneBlock
+                  key={scene.id}
+                  scene={scene}
+                  index={i}
+                  total={scenes.length}
+                  disabled={saving}
+                  onChange={(updated) => updateScene(i, updated)}
+                  onRemove={() => removeScene(i)}
+                />
+              ))}
+            </div>
+            {!saving && (
+              <button
+                type="button"
+                onClick={addScene}
+                className="mt-1 text-sm text-fantom-blue hover:underline"
+              >
+                + Add scene
+              </button>
+            )}
           </div>
 
           <div className="space-y-1.5">

@@ -20,15 +20,12 @@ const VALID_PACINGS = new Set(['fast', 'medium', 'slow'])
 const VALID_STATUSES = new Set(['draft', 'ready', 'rendering', 'rendered', 'failed'])
 
 // ── Client serialisation ──────────────────────────────────────────────────────
-// mainScenes / voiceoverScripts are stored as jsonb but the UI treats them as
-// plain strings (a JSON string scalar is valid jsonb). Cast here so the client
-// always sees string | null — never a raw jsonb blob shape.
+// mainScenes is stored as jsonb — pass the array through as-is (null if unset).
 
 function formatForClient(brief: ShortsBrief) {
   return {
     ...brief,
-    mainScenes: typeof brief.mainScenes === 'string' ? brief.mainScenes : null,
-    voiceoverScripts: typeof brief.voiceoverScripts === 'string' ? brief.voiceoverScripts : null,
+    mainScenes: Array.isArray(brief.mainScenes) ? brief.mainScenes : null,
   }
 }
 
@@ -38,8 +35,7 @@ function toBriefForValidation(brief: ShortsBrief): BriefForValidation {
     voiceCloneId: brief.voiceCloneId,
     brandKitId: brief.brandKitId,
     opening: brief.opening,
-    mainScenes: typeof brief.mainScenes === 'string' ? brief.mainScenes : null,
-    voiceoverScripts: typeof brief.voiceoverScripts === 'string' ? brief.voiceoverScripts : null,
+    mainScenes: Array.isArray(brief.mainScenes) ? brief.mainScenes : null,
     closing: brief.closing,
     durationSeconds: brief.durationSeconds,
   }
@@ -60,8 +56,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       opening?: string | null
       closing?: string | null
       pacing?: string | null
-      mainScenes?: string | null
-      voiceoverScripts?: string | null
+      mainScenes?: Array<{ id: string; description: string; voiceover_script?: string }> | null
     }
   }>('/shorts-briefs', { preHandler: requireAuth }, async (request, reply) => {
     const body = request.body ?? {}
@@ -99,8 +94,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
           opening: body.opening ?? null,
           closing: body.closing ?? null,
           pacing: (body.pacing as ShortsBrief['pacing']) ?? null,
-          mainScenes: body.mainScenes ?? null,
-          voiceoverScripts: body.voiceoverScripts ?? null,
+          mainScenes: Array.isArray(body.mainScenes) ? body.mainScenes : null,
           status: 'draft',
         })
         .returning()
@@ -444,8 +438,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       opening?: string | null
       closing?: string | null
       pacing?: string | null
-      mainScenes?: string | null
-      voiceoverScripts?: string | null
+      mainScenes?: Array<{ id: string; description: string; voiceover_script?: string }> | null
       status?: string
     }
   }>('/shorts-briefs/:id', { preHandler: requireAuth }, async (request, reply) => {
@@ -555,8 +548,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
         }
         patch.pacing = (body.pacing as ShortsBrief['pacing']) ?? null
       }
-      if ('mainScenes' in body) patch.mainScenes = body.mainScenes ?? null
-      if ('voiceoverScripts' in body) patch.voiceoverScripts = body.voiceoverScripts ?? null
+      if ('mainScenes' in body) patch.mainScenes = Array.isArray(body.mainScenes) ? body.mainScenes : null
     }
 
     if (Object.keys(patch).length === 0) {

@@ -9,6 +9,18 @@ export type BriefStatus = (typeof BRIEF_STATUSES)[number]
 export const BRIEF_PACINGS = ['fast', 'medium', 'slow'] as const
 export type BriefPacing = (typeof BRIEF_PACINGS)[number]
 
+// ── Scene ─────────────────────────────────────────────────────────────────────
+
+export const SceneSchema = z.object({
+  id: z.string().min(1),
+  description: z.string().min(1).max(2000),
+  voiceover_script: z.string().max(5000).optional(),
+})
+
+export type Scene = z.infer<typeof SceneSchema>
+
+// ── Request schemas ───────────────────────────────────────────────────────────
+
 export const CreateShortsBriefSchema = z.object({
   title: z.string().min(1).max(255),
   description: z.string().max(2000).optional(),
@@ -19,8 +31,7 @@ export const CreateShortsBriefSchema = z.object({
   opening: z.string().max(2000).optional(),
   closing: z.string().max(2000).optional(),
   pacing: z.enum(BRIEF_PACINGS).optional(),
-  mainScenes: z.string().max(10000).nullable().optional(),
-  voiceoverScripts: z.string().max(10000).nullable().optional(),
+  mainScenes: z.array(SceneSchema).nullable().optional(),
 })
 
 export const UpdateShortsBriefSchema = z.object({
@@ -33,8 +44,7 @@ export const UpdateShortsBriefSchema = z.object({
   opening: z.string().max(2000).nullable().optional(),
   closing: z.string().max(2000).nullable().optional(),
   pacing: z.enum(BRIEF_PACINGS).nullable().optional(),
-  mainScenes: z.string().max(10000).nullable().optional(),
-  voiceoverScripts: z.string().max(10000).nullable().optional(),
+  mainScenes: z.array(SceneSchema).nullable().optional(),
   status: z.enum(BRIEF_STATUSES).optional(),
   errorMessage: z.string().nullable().optional(),
 })
@@ -49,10 +59,7 @@ export interface BriefForValidation {
   voiceCloneId: string | null
   brandKitId: string | null
   opening: string | null
-  /** Stored as a string scalar in jsonb; null if unset. */
-  mainScenes: string | null
-  /** Stored as a string scalar in jsonb; null if unset. */
-  voiceoverScripts: string | null
+  mainScenes: Array<{ id: string; description: string; voiceover_script?: string }> | null
   closing: string | null
   durationSeconds: number
 }
@@ -101,12 +108,12 @@ export function validateBriefForReady(
 
   // Voice / script consistency
   const hasVoice = Boolean(brief.voiceCloneId)
-  const hasVO = Boolean(brief.voiceoverScripts?.trim())
+  const hasVO = brief.mainScenes?.some((s) => Boolean(s.voiceover_script?.trim())) ?? false
   if (hasVoice && !hasVO) {
-    warnings.push('Voice selected but no voiceover scripts — the AI will generate generic VO.')
+    warnings.push('Voice selected but no voiceover scripts in any scene — VO will be skipped.')
   }
   if (hasVO && !hasVoice) {
-    warnings.push('Voiceover scripts present but no voice selected — scripts will be ignored.')
+    warnings.push('Voiceover scripts present in scenes but no voice selected — scripts will be ignored.')
   }
 
   // Brand kit
@@ -116,9 +123,11 @@ export function validateBriefForReady(
 
   // Brief content empty
   const hasContent =
-    brief.opening?.trim() || brief.mainScenes?.trim() || brief.closing?.trim() || brief.voiceoverScripts?.trim()
+    brief.opening?.trim() ||
+    (brief.mainScenes && brief.mainScenes.length > 0) ||
+    brief.closing?.trim()
   if (!hasContent) {
-    warnings.push('Brief is empty — add an opening, main scenes, or closing to guide the AI.')
+    warnings.push('Brief is empty — add an opening, scenes, or closing to guide the AI.')
   }
 
   return { blockers, warnings, info }
@@ -126,14 +135,14 @@ export function validateBriefForReady(
 
 // ── Cost estimation ───────────────────────────────────────────────────────────
 
-/** TODO: calibrate from actual ElevenLabs bills in 1B.5. Creator plan rate. */
+/** Creator plan rate. TODO: calibrate from actual ElevenLabs bills. */
 export const ELEVENLABS_USD_PER_1K_CHARS = 0.30
 
 /**
  * Rough estimate: Render Standard 2GB ≈ $0.0167/hr idle; during active render
  * assume ~2× for CPU headroom → $0.033/hr ÷ 60 min ≈ $0.0006/min wall-clock.
  * Rounded up generously since this is a user-facing display figure, not billing.
- * TODO: calibrate against actual 1B.5 + 1B.6 render telemetry.
+ * TODO: calibrate against actual render telemetry.
  */
 export const RENDER_USD_PER_MINUTE = 0.02
 
@@ -146,10 +155,15 @@ export interface CostEstimate {
 
 /** Pure cost estimation — reused by API (preview endpoint) and UI. */
 export function estimateBriefCost(brief: BriefForValidation): CostEstimate {
-  const voText = [brief.opening, brief.mainScenes, brief.voiceoverScripts, brief.closing]
-    .filter(Boolean)
-    .join(' ')
-  const voCharCount = voText.length
+  // Count chars from all voiceover_script fields in scenes, plus opening/closing
+  // (opening and closing are also voiced when a voice is selected)
+  const voTexts = [
+    brief.opening,
+    ...(brief.mainScenes ?? []).map((s) => s.voiceover_script).filter(Boolean),
+    brief.closing,
+  ].filter(Boolean) as string[]
+
+  const voCharCount = voTexts.join(' ').length
   const voCostUsd = (voCharCount / 1000) * ELEVENLABS_USD_PER_1K_CHARS
   const renderMinutes = brief.durationSeconds / 60
   const renderCostUsd = renderMinutes * RENDER_USD_PER_MINUTE
