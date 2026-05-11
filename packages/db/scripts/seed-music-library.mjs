@@ -2,20 +2,26 @@
 /**
  * seed-music-library.mjs
  *
- * Uploads Pixabay MP3s from a local directory to R2 at shared/music-library/{slug}.mp3.
- * Uses an explicit slug → source-filename map so Justin doesn't have to rename anything.
+ * Uploads Pixabay MP3s to R2 at shared/music-library/{slug}.mp3.
+ * Uses the compiled @fantom/storage package (relative path) so no extra deps needed.
  *
- * Usage:
- *   R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET_NAME=... \
- *     node packages/db/scripts/seed-music-library.mjs "/path/to/Pixabay Music/"
- *
- * R2 creds are in .env.local — you can source them first:
+ * Usage — run from the repo root:
  *   set -a; source .env.local; set +a
+ *   node packages/db/scripts/seed-music-library.mjs ~/Desktop/Pixabay\ Music/
  */
 
-import { createReadStream, statSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
+import { fileURLToPath } from 'node:url'
+import { dirname } from 'node:path'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+// Import the compiled storage package via relative path — avoids needing
+// @aws-sdk/client-s3 installed locally in packages/db.
+const { putObjectFromFile, getObjectMetadata } = await import(
+  join(__dirname, '../../storage/dist/index.js')
+)
 
 // slug → source filename in Justin's Pixabay Music folder
 const TRACK_MAP = [
@@ -33,21 +39,6 @@ const TRACK_MAP = [
   // Upbeat-Motion.mp3 intentionally excluded — 11s, too short to loop
 ]
 
-const {
-  R2_ACCOUNT_ID,
-  R2_ACCESS_KEY_ID,
-  R2_SECRET_ACCESS_KEY,
-  R2_BUCKET_NAME,
-} = process.env
-
-if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET_NAME) {
-  console.error(
-    'Missing R2 env vars.\nRequired: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME\n' +
-    'Tip: set -a; source .env.local; set +a',
-  )
-  process.exit(1)
-}
-
 const dir = process.argv[2]
 if (!dir) {
   console.error('Usage: node packages/db/scripts/seed-music-library.mjs "/path/to/Pixabay Music/"')
@@ -55,18 +46,10 @@ if (!dir) {
 }
 
 const musicDir = resolve(dir)
-const client = new S3Client({
-  region: 'auto',
-  endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: R2_ACCESS_KEY_ID,
-    secretAccessKey: R2_SECRET_ACCESS_KEY,
-  },
-})
 
-async function fileExists(r2Key) {
+async function r2KeyExists(r2Key) {
   try {
-    await client.send(new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: r2Key }))
+    await getObjectMetadata(r2Key)
     return true
   } catch {
     return false
@@ -85,26 +68,18 @@ async function upload({ slug, file }) {
     return false
   }
 
-  if (await fileExists(r2Key)) {
+  if (await r2KeyExists(r2Key)) {
     console.log(`  EXISTS ${r2Key} — skipping`)
     return true
   }
 
   console.log(`  UPLOAD ${file} → ${r2Key} (${(size / 1024).toFixed(0)} KB)`)
-  await client.send(
-    new PutObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: r2Key,
-      Body: createReadStream(localPath),
-      ContentType: 'audio/mpeg',
-      ContentLength: size,
-    }),
-  )
+  await putObjectFromFile(r2Key, localPath, 'audio/mpeg')
   console.log(`  OK     ${r2Key}`)
   return true
 }
 
-console.log(`Uploading ${TRACK_MAP.length} tracks to R2 bucket: ${R2_BUCKET_NAME}`)
+console.log(`Uploading ${TRACK_MAP.length} tracks to R2`)
 console.log(`Source:   ${musicDir}`)
 console.log()
 
