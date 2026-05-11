@@ -54,6 +54,10 @@ export interface AssemblyResult {
   actualDurationSeconds: number
   sourceClipCount: number
   ffmpegLog: string
+  /** Start time of each clip in the assembled video (seconds). clipStartTimes[0] = 0. */
+  clipStartTimes: number[]
+  /** Planned playout duration of each clip (seconds, after pacing trim). */
+  clipDurations: number[]
 }
 
 // ── Clip plan ─────────────────────────────────────────────────────────────────
@@ -326,6 +330,16 @@ export async function assembleShortFromBrief(
   const plan = buildClipPlan(downloaded, brief.durationSeconds, brief.pacing, log)
   const plannedTotal = plan.reduce((acc, c) => acc + c.duration, 0)
 
+  // Compute per-clip start times for VO offset calculation in mixVoiceover.
+  // clipStartTimes[i] = sum of durations of clips 0..i-1.
+  const clipDurations = plan.map((p) => p.duration)
+  let cumulative = 0
+  const clipStartTimes = clipDurations.map((d) => {
+    const start = cumulative
+    cumulative += d
+    return start
+  })
+
   log(
     `plan: ${plan.length} clip(s), target=${brief.durationSeconds}s, ` +
       `planned=${plannedTotal.toFixed(1)}s, pacing=${brief.pacing ?? 'fast (default)'}`,
@@ -391,5 +405,7 @@ export async function assembleShortFromBrief(
     actualDurationSeconds,
     sourceClipCount: downloaded.length,
     ffmpegLog: ffmpegLog.slice(-4096),
+    clipStartTimes,
+    clipDurations,
   }
 }

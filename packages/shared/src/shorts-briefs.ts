@@ -126,6 +126,25 @@ export function validateBriefForReady(
     warnings.push('Voiceover scripts present but no voice selected — scripts will be ignored.')
   }
 
+  // Scene / clip count mismatch (neither blocks render — user can ship intentionally sparse briefs)
+  const sceneCount = brief.mainScenes?.length ?? 0
+  const clipCount = clips.length
+  if (sceneCount > 0 && clipCount > 0) {
+    if (sceneCount > clipCount) {
+      const extra = sceneCount - clipCount
+      warnings.push(
+        `Brief has ${extra} scene${extra !== 1 ? 's' : ''} beyond the ${clipCount} clip${clipCount !== 1 ? 's' : ''} — ` +
+          `VO for those scene${extra !== 1 ? 's' : ''} will be skipped (no clip to play over).`,
+      )
+    }
+    if (sceneCount < clipCount) {
+      const unmapped = clipCount - sceneCount
+      info.push(
+        `${unmapped} clip${unmapped !== 1 ? 's' : ''} have no scene mapped — original audio will play for those.`,
+      )
+    }
+  }
+
   // Brand kit
   if (!brief.brandKitId) {
     info.push('No brand kit selected — brand overlays will be skipped.')
@@ -162,10 +181,17 @@ export interface CostEstimate {
   voCostUsd: number
   renderCostUsd: number
   totalUsd: number
+  /** Number of scenes whose index ≥ clip count — VO chars are counted but won't render. */
+  outOfRangeSceneCount: number
 }
 
-/** Pure cost estimation — reused by API (preview endpoint) and UI. */
-export function estimateBriefCost(brief: BriefForValidation): CostEstimate {
+/**
+ * Pure cost estimation — reused by API (preview endpoint) and UI.
+ *
+ * @param brief     Brief fields needed for estimation.
+ * @param clipCount Optional clip count to compute outOfRangeSceneCount.
+ */
+export function estimateBriefCost(brief: BriefForValidation, clipCount?: number): CostEstimate {
   // Count only the VO script texts — the fields that actually get synthesized to speech.
   // Descriptive text (opening, closing direction) is not voiced.
   const voTexts = [
@@ -178,10 +204,17 @@ export function estimateBriefCost(brief: BriefForValidation): CostEstimate {
   const voCostUsd = (voCharCount / 1000) * ELEVENLABS_USD_PER_1K_CHARS
   const renderMinutes = brief.durationSeconds / 60
   const renderCostUsd = renderMinutes * RENDER_USD_PER_MINUTE
+
+  const outOfRangeSceneCount =
+    clipCount !== undefined && brief.mainScenes
+      ? Math.max(0, brief.mainScenes.length - clipCount)
+      : 0
+
   return {
     voCharCount,
     voCostUsd,
     renderCostUsd,
     totalUsd: voCostUsd + renderCostUsd,
+    outOfRangeSceneCount,
   }
 }

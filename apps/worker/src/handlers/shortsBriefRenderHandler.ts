@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { mkdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import type { Job as BullJob } from 'bullmq'
 import type { ShortsRenderPayload } from '@fantom/jobs'
 import { putObjectFromFile } from '@fantom/storage'
@@ -8,6 +10,7 @@ import { logEvent } from '@fantom/observability'
 import { assembleShortFromBrief } from '../lib/assembleShort.js'
 import { generateVO } from '../lib/generateVO.js'
 import { mixVoiceover } from '../lib/voMix.js'
+import type { VOFileWithOffset } from '../lib/voMix.js'
 import {
   getShortsRenderRow,
   patchShortsRender,
@@ -17,6 +20,25 @@ import {
   createShortsRenderedAsset,
   getTenantSlug,
 } from '../lib/db.js'
+
+const execFileAsync = promisify(execFile)
+
+// ── Audio duration probe ───────────────────────────────────────────────────────
+// Used to compute clip-position offsets for VO segments (opening → scene 1
+// sequencing, and closing placement at video_end - closing_duration).
+
+async function probeAudioMs(filePath: string): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync(
+      'ffprobe',
+      ['-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath],
+      { timeout: 10_000 },
+    )
+    return Math.round(parseFloat(stdout.trim()) * 1000) || 0
+  } catch {
+    return 0
+  }
+}
 
 // ── Cancellation ──────────────────────────────────────────────────────────────
 
@@ -129,6 +151,16 @@ export async function handleShortsBriefRender(
 
     // ── VO generation + audio mix ─────────────────────────────────────────────
     // Only runs when a voice is selected AND at least one scene has a VO script.
+    //
+    // Offset model (1B.6.1 scope — 1 brief scene = 1 source clip, sequential):
+    //   Opening VO      → offset 0  (top of clip 1)
+    //   Scene[i] VO     → offset = clipStartTimes[i]  (clip i+1 start)
+    //                     If opening VO also exists, scene[0] is further
+    //                     offset by opening_duration so they sequence inside clip 1.
+    //                     Scenes with index ≥ clip count are skipped (logged).
+    //   Closing VO      → offset = actualDurationSeconds - closing_duration
+    //                     Floored at last clip's start time so it never precedes
+    //                     the final clip.
 
     const tenantSlug = await getTenantSlug(tenantId)
 
@@ -138,19 +170,19 @@ export async function handleShortsBriefRender(
       ? (brief.mainScenes as Array<{ id: string; description: string; voiceover_script?: string }>)
       : []
 
-    // Collect all VO segments in playback order:
-    //   1. Opening VO (if present) → plays at video start
-    //   2. Per-scene VOs in order  → play over body of video
-    //   3. Closing VO (if present) → plays at video end
+    // Collect VO specs: opening → scene VOs (filtered to those with scripts) → closing
+    const hasOpeningVO = Boolean(brief.openingVoiceoverScript?.trim())
+    const hasClosingVO = Boolean(brief.closingVoiceoverScript?.trim())
+
     const voScenes = [
-      ...(brief.openingVoiceoverScript?.trim()
-        ? [{ id: 'opening', voiceover_script: brief.openingVoiceoverScript }]
+      ...(hasOpeningVO
+        ? [{ id: 'opening', voiceover_script: brief.openingVoiceoverScript! }]
         : []),
       ...scenes
         .filter((s) => typeof s.voiceover_script === 'string' && s.voiceover_script.trim())
         .map((s) => ({ id: s.id, voiceover_script: s.voiceover_script! })),
-      ...(brief.closingVoiceoverScript?.trim()
-        ? [{ id: 'closing', voiceover_script: brief.closingVoiceoverScript }]
+      ...(hasClosingVO
+        ? [{ id: 'closing', voiceover_script: brief.closingVoiceoverScript! }]
         : []),
     ]
 
@@ -169,10 +201,90 @@ export async function handleShortsBriefRender(
       if (voFiles.length > 0) {
         await checkCancelled(renderId, tenantId)
 
-        log(`mixing ${voFiles.length} VO segment(s) into video`)
+        // ── Compute clip-position offsets ───────────────────────────────────
+        // assembly.clipStartTimes[i] = seconds into the assembled video where
+        // clip i begins. Scene[i] maps 1:1 to clip[i].
+
+        const { clipStartTimes, clipDurations, actualDurationSeconds } = assembly
+        const clipCount = clipStartTimes.length
+
+        // How many scene VOs are in voFiles (excludes opening/closing)?
+        // voFiles preserves the voScenes order: opening?, scene…, closing?
+        let openingDurationMs = 0
+        if (hasOpeningVO) {
+          const openingFile = voFiles.find((f) => f.sceneId === 'opening')
+          if (openingFile) openingDurationMs = await probeAudioMs(openingFile.audioPath)
+        }
+
+        let closingDurationMs = 0
+        if (hasClosingVO) {
+          const closingFile = voFiles.find((f) => f.sceneId === 'closing')
+          if (closingFile) closingDurationMs = await probeAudioMs(closingFile.audioPath)
+        }
+
+        // Track which scene index each scene-VO file corresponds to.
+        // voFiles are in voScenes order: opening(opt), scene…, closing(opt).
+        let sceneVoIdx = 0 // 0-based index into scenes[] for non-opening/closing VOs
+
+        const voFilesWithOffsets: VOFileWithOffset[] = []
+
+        for (const vf of voFiles) {
+          if (vf.sceneId === 'opening') {
+            voFilesWithOffsets.push({ ...vf, startOffsetMs: 0 })
+            continue
+          }
+
+          if (vf.sceneId === 'closing') {
+            // Place closing VO so it ends at video end.
+            // Floor at last clip's start time (prevents negative or pre-last-clip placement).
+            const lastClipStartMs = (clipStartTimes[clipCount - 1] ?? 0) * 1000
+            const closingOffsetMs = Math.max(
+              actualDurationSeconds * 1000 - closingDurationMs,
+              lastClipStartMs,
+            )
+            voFilesWithOffsets.push({ ...vf, startOffsetMs: closingOffsetMs })
+            log(
+              `  closing VO offset: ${(closingOffsetMs / 1000).toFixed(2)}s ` +
+                `(video=${actualDurationSeconds.toFixed(2)}s, vo=${(closingDurationMs / 1000).toFixed(2)}s)`,
+            )
+            continue
+          }
+
+          // Scene VO — maps to scenes[sceneVoIdx], which plays over clip[sceneVoIdx].
+          const clipIdx = sceneVoIdx
+
+          if (clipIdx >= clipCount) {
+            log(
+              `  WARNING: scene VO "${vf.sceneId}" (index ${clipIdx}) has no clip — ` +
+                `brief has ${clipCount} clip(s), skipping`,
+            )
+            sceneVoIdx++
+            continue
+          }
+
+          let offsetMs: number
+          if (clipIdx === 0 && hasOpeningVO) {
+            // Opening VO plays first inside clip 1; scene 1 VO starts right after.
+            offsetMs = openingDurationMs
+            const clip1EndMs = (clipStartTimes[0]! + clipDurations[0]!) * 1000
+            if (openingDurationMs + /* rough estimate */ 0 > clip1EndMs) {
+              log(`  WARNING: opening VO may overflow clip 1 duration`)
+            }
+          } else {
+            offsetMs = clipStartTimes[clipIdx]! * 1000
+          }
+
+          voFilesWithOffsets.push({ ...vf, startOffsetMs: offsetMs })
+          log(
+            `  scene VO "${vf.sceneId}" → clip ${clipIdx + 1} offset ${(offsetMs / 1000).toFixed(2)}s`,
+          )
+          sceneVoIdx++
+        }
+
+        log(`mixing ${voFilesWithOffsets.length} VO segment(s) into video`)
         finalOutputPath = await mixVoiceover({
           videoPath: assembly.outputPath,
-          voFiles,
+          voFiles: voFilesWithOffsets,
           workDir,
           log,
         })

@@ -45,6 +45,7 @@ interface CostEstimate {
   voCostUsd: number
   renderCostUsd: number
   totalUsd: number
+  outOfRangeSceneCount: number
 }
 
 interface ValidationResult {
@@ -332,6 +333,64 @@ export default function PreviewPage() {
         </CardContent>
       </Card>
 
+      {/* ── Clip → Scene Map ─────────────────────────────────────────────────── */}
+      {clips.length > 0 && (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>Clip → Scene Map</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1.5">
+            <p className="text-xs text-fantom-text-muted">
+              Scene 1 plays over Clip 1, Scene 2 over Clip 2, etc. Clips without a scene play original audio.
+            </p>
+            <div className="space-y-1">
+              {clips.map((clip, clipIndex) => {
+                const scene = brief.mainScenes?.[clipIndex]
+                const hasMappedScene = Boolean(scene?.description?.trim())
+                return (
+                  <div
+                    key={clip.id}
+                    className="flex flex-wrap items-center gap-1.5 rounded-fantom border border-fantom-steel-border bg-fantom-steel/20 px-3 py-2 text-sm"
+                  >
+                    <span className="font-medium text-fantom-text-muted flex-shrink-0">
+                      Clip {clipIndex + 1}
+                      <span className="ml-1 text-xs font-normal text-fantom-text-muted/60">
+                        {clip.originalFilename}
+                        {clip.durationSeconds ? ` · ${fmtDuration(clip.durationSeconds)}` : ''}
+                      </span>
+                    </span>
+                    <span className="text-fantom-text-muted/40 flex-shrink-0">→</span>
+                    {hasMappedScene ? (
+                      <span className="text-fantom-text line-clamp-1 flex-1">{scene!.description}</span>
+                    ) : (
+                      <span className="flex-1 text-xs italic text-fantom-text-muted/60">
+                        No scene mapped — original audio will play
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {(brief.mainScenes?.length ?? 0) > clips.length && (
+              <div className="flex items-start gap-2 rounded-fantom border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+                {(() => {
+                  const extra = (brief.mainScenes?.length ?? 0) - clips.length
+                  return `${extra} scene${extra !== 1 ? 's' : ''} past the last clip — VO for those scenes will be skipped at render time.`
+                })()}
+              </div>
+            )}
+            {clips.length > (brief.mainScenes?.length ?? 0) && (
+              <div className="flex items-start gap-2 rounded-fantom border border-fantom-steel-border bg-fantom-steel/10 px-3 py-2 text-xs text-fantom-text-muted">
+                {(() => {
+                  const unmapped = clips.length - (brief.mainScenes?.length ?? 0)
+                  return `${unmapped} clip${unmapped !== 1 ? 's' : ''} without a scene — original audio will play for those.`
+                })()}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Selected Clips ───────────────────────────────────────────────────── */}
       <Card className="mb-4">
         <CardHeader>
@@ -426,6 +485,11 @@ export default function PreviewPage() {
               <span className="font-medium text-fantom-text">Total estimate</span>
               <span className="font-semibold text-fantom-text">{fmtUsd(estimates.totalUsd)}</span>
             </div>
+            {estimates.outOfRangeSceneCount > 0 && (
+              <p className="pt-1 text-xs text-amber-400/80">
+                Note: {estimates.outOfRangeSceneCount} scene{estimates.outOfRangeSceneCount !== 1 ? 's' : ''} past the last clip — VO chars counted above but won't render.
+              </p>
+            )}
             <p className="pt-1 text-xs text-fantom-text-muted">
               Estimates are approximate. VO cost counts voiceover script characters across all scenes.
             </p>

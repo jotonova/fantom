@@ -1,15 +1,34 @@
 /**
  * voMix — VO audio mix step
  *
- * Given an assembled video and one or more VO audio segments:
- *   1. Concatenates segments into a single VO track (if >1)
- *   2. Uses sidechain compression to duck source audio to ~-18dB when VO is audible
- *   3. Mixes ducked source + VO and normalizes output to -16 LUFS
- *   4. Returns the path of the mixed MP4 (re-encodes audio only; copies video stream)
+ * Given an assembled video and one or more VO audio segments with pre-computed
+ * start offsets:
+ *   1. Each VO file is fed as a separate ffmpeg input, delayed to its clip
+ *      position using `adelay`.
+ *   2. All delayed VO tracks are merged into a single VO bus via amix.
+ *   3. The VO bus is padded with silence to video length (apad) so the
+ *      sidechain compressor runs for the full video — without apad,
+ *      sidechaincompress terminates when the shortest VO input exhausts,
+ *      silencing all audio past that point.
+ *   4. Source audio is sidechain-compressed (ducked) whenever the VO bus is
+ *      audible, then mixed back with the VO bus.
+ *   5. Output is loudnorm-normalized to -16 LUFS.
+ *   6. Video stream is copied — no re-encode.
+ *
+ * Filter graph (N VO inputs):
+ *   [1:a]adelay=T1ms:all=1,aformat=channel_layouts=stereo[vo_del_0]
+ *   ...
+ *   [N:a]adelay=TNms:all=1,aformat=channel_layouts=stereo[vo_del_N-1]
+ *   [vo_del_0]...[vo_del_N-1]amix=inputs=N:duration=longest:normalize=0[vo_bus]
+ *     (or [vo_del_0]anull[vo_bus] when N=1)
+ *   [vo_bus]apad[vo_padded]
+ *   [vo_padded]asplit[vo_mix][vo_sc]
+ *   [0:a][vo_sc]sidechaincompress=threshold=0.02:ratio=10:attack=5:release=200[src_ducked]
+ *   [src_ducked][vo_mix]amix=inputs=2:duration=first:normalize=0[mixed]
+ *   [mixed]loudnorm=I=-16:TP=-1.5:LRA=11[normed]
  */
 
 import { execFile } from 'node:child_process'
-import { copyFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { VOFile } from './generateVO.js'
@@ -18,20 +37,28 @@ const execFileAsync = promisify(execFile)
 
 const MIX_TIMEOUT_MS = 5 * 60_000
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+/** VOFile extended with a clip-position-based start offset for adelay. */
+export interface VOFileWithOffset extends VOFile {
+  /** Milliseconds from the start of the assembled video at which this VO begins. */
+  startOffsetMs: number
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
- * Mix VO over an assembled video.
+ * Mix VO over an assembled video using per-segment clip-position offsets.
  *
  * @param videoPath   Path to the assembled MP4 (output of assembleShortFromBrief)
- * @param voFiles     VO segment files in playback order
+ * @param voFiles     VO segments with pre-computed clip-position start offsets
  * @param workDir     Working directory for temp files
  * @param log         Render-scoped logger
  * @returns           Path to the mixed MP4 (different file from videoPath)
  */
 export async function mixVoiceover(opts: {
   videoPath: string
-  voFiles: VOFile[]
+  voFiles: VOFileWithOffset[]
   workDir: string
   log: (msg: string) => void
 }): Promise<string> {
@@ -39,61 +66,66 @@ export async function mixVoiceover(opts: {
 
   if (voFiles.length === 0) return videoPath
 
-  const voCombinedPath = join(workDir, 'vo_combined.mp3')
   const mixedPath = join(workDir, 'output_mixed.mp4')
 
-  // ── Step 1: Combine VO segments ───────────────────────────────────────────
-  if (voFiles.length === 1) {
-    await copyFile(voFiles[0]!.audioPath, voCombinedPath)
-  } else {
-    // Write ffmpeg concat list — absolute paths, no unsafe char issues
-    const concatList = voFiles.map((f) => `file '${f.audioPath}'`).join('\n')
-    const listPath = join(workDir, 'vo_list.txt')
-    await writeFile(listPath, concatList)
+  log(
+    `mixing ${voFiles.length} VO segment(s): ` +
+      voFiles.map((f) => `${f.sceneId}@${(f.startOffsetMs / 1000).toFixed(2)}s`).join(', '),
+  )
 
-    log(`concatenating ${voFiles.length} VO segments`)
-    await execFileAsync(
-      'ffmpeg',
-      ['-f', 'concat', '-safe', '0', '-i', listPath, '-ar', '44100', '-ac', '1', '-y', voCombinedPath],
-      { timeout: 60_000 },
+  // ── Build ffmpeg args ─────────────────────────────────────────────────────
+  // Input 0 = video; inputs 1..N = VO files in voFiles order.
+
+  const args: string[] = ['-i', videoPath]
+  for (const vf of voFiles) {
+    args.push('-i', vf.audioPath)
+  }
+
+  // ── filter_complex ────────────────────────────────────────────────────────
+
+  const filterLines: string[] = []
+  const voDelayedPads: string[] = []
+
+  for (let i = 0; i < voFiles.length; i++) {
+    const vf = voFiles[i]!
+    const inputIdx = i + 1 // input 0 = video
+    const delayMs = Math.max(0, Math.round(vf.startOffsetMs))
+    const padLabel = `[vo_del_${i}]`
+
+    // adelay positions the segment at the correct clip offset.
+    // aformat upmixes mono ElevenLabs MP3s to stereo so they're compatible
+    // with the stereo source audio going into sidechaincompress and amix.
+    filterLines.push(
+      `[${inputIdx}:a]adelay=${delayMs}:all=1,aformat=channel_layouts=stereo${padLabel}`,
+    )
+    voDelayedPads.push(padLabel)
+  }
+
+  // Merge all delayed VO tracks into a single VO bus.
+  if (voFiles.length === 1) {
+    // anull = zero-overhead passthrough that just renames the label.
+    filterLines.push(`${voDelayedPads[0]}anull[vo_bus]`)
+  } else {
+    filterLines.push(
+      `${voDelayedPads.join('')}amix=inputs=${voFiles.length}:duration=longest:normalize=0[vo_bus]`,
     )
   }
 
-  // ── Step 2: Mix VO over video ─────────────────────────────────────────────
-  //
-  // Filter graph:
-  //   [1:a]apad → extend VO with silence to match video length.
-  //     Critical: sidechaincompress terminates its output when the sidechain
-  //     stream ends. Without apad, audio past the last VO segment is completely
-  //     silent because the compressor stops producing output as soon as [vo_sc]
-  //     exhausts. With silence-padded sidechain the threshold (0.02) is never
-  //     exceeded in the tail, so source audio passes through uncompressed.
-  //   [vo_padded]asplit → sends padded VO to mix bus [vo_mix] and sidechain [vo_sc]
-  //   [0:a][vo_sc]sidechaincompress → compresses source audio when VO exceeds threshold
-  //     threshold=0.02  (~-34dBFS): compression kicks in when VO is audible
-  //     ratio=10        : heavy compression — net source attenuation ≈ -18dB in VO regions
-  //     attack=5ms / release=200ms: fast onset, gentle release (avoids pumping)
-  //   [src_ducked][vo_mix]amix → combine compressed source + VO at 0dB
-  //     normalize=0: no auto-level normalisation from amix itself
-  //     duration=first: output length = video length (VO may be shorter)
-  //   loudnorm: two-pass EBU R128 normalisation to -16 LUFS, -1.5dBTP, LRA≤11
-  //
-  // Video stream is copied — no re-encode.
-
-  log('mixing VO with sidechain ducking and -16 LUFS normalization')
-
-  const filterComplex = [
-    '[1:a]apad[vo_padded]',
+  // apad → VO bus padded to video length so sidechaincompress never terminates early.
+  // asplit → [vo_mix] goes to final amix; [vo_sc] is the sidechain trigger.
+  // sidechaincompress → ducks source audio ~-18dB while any VO is audible.
+  // amix duration=first → output length = video length (first = [src_ducked]).
+  // loudnorm → EBU R128 -16 LUFS, -1.5dBTP.
+  filterLines.push(
+    '[vo_bus]apad[vo_padded]',
     '[vo_padded]asplit[vo_mix][vo_sc]',
     '[0:a][vo_sc]sidechaincompress=threshold=0.02:ratio=10:attack=5:release=200[src_ducked]',
     '[src_ducked][vo_mix]amix=inputs=2:duration=first:normalize=0[mixed]',
     '[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[normed]',
-  ].join(';')
+  )
 
-  const args = [
-    '-i', videoPath,
-    '-i', voCombinedPath,
-    '-filter_complex', filterComplex,
+  args.push(
+    '-filter_complex', filterLines.join(';'),
     '-map', '0:v',
     '-map', '[normed]',
     '-c:v', 'copy',
@@ -103,7 +135,9 @@ export async function mixVoiceover(opts: {
     '-movflags', '+faststart',
     '-y',
     mixedPath,
-  ]
+  )
+
+  log(`ffmpeg (vo mix) args: ${args.join(' ')}`)
 
   try {
     const { stderr } = await execFileAsync('ffmpeg', args, {

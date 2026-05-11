@@ -35,6 +35,12 @@ interface ShortsBrief {
   updatedAt: string
 }
 
+interface ClipMeta {
+  id: string
+  originalFilename: string
+  durationSeconds: string | null
+}
+
 interface BrandKit {
   id: string
   name: string
@@ -47,6 +53,16 @@ interface VoiceClone {
   status: string
   isPersonal: boolean
   providerVoiceId: string | null
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtDuration(seconds: string | number | null): string {
+  if (seconds == null) return '—'
+  const s = Math.round(Number(seconds))
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  return m > 0 ? `${m}:${rem.toString().padStart(2, '0')}` : `0:${rem.toString().padStart(2, '0')}`
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -158,6 +174,7 @@ export default function EditShortsBriefPage() {
   const [voiceCloneId, setVoiceCloneId] = useState<string>('')
 
   // Reference data
+  const [clipMetaMap, setClipMetaMap] = useState<Record<string, ClipMeta>>({})
   const [brandKits, setBrandKits] = useState<BrandKit[]>([])
   const [voices, setVoices] = useState<VoiceClone[]>([])
 
@@ -191,6 +208,18 @@ export default function EditShortsBriefPage() {
         setLoadError(err instanceof ApiError && err.status === 404 ? 'Brief not found' : 'Failed to load brief')
       })
 
+    apiFetch<{ assets: Array<{ id: string; originalFilename: string; durationSeconds: string | null; normalizedR2Key: string | null }> }>(
+      '/assets?kind=video&source=upload&limit=100',
+    )
+      .then((r) => {
+        const map: Record<string, ClipMeta> = {}
+        for (const a of r.assets ?? []) {
+          if (a.normalizedR2Key !== null) map[a.id] = { id: a.id, originalFilename: a.originalFilename, durationSeconds: a.durationSeconds }
+        }
+        setClipMetaMap(map)
+      })
+      .catch(() => {})
+
     apiFetch<{ brandKits: BrandKit[] }>('/brand-kits')
       .then((r) => setBrandKits(r.brandKits ?? []))
       .catch(() => {})
@@ -210,6 +239,15 @@ export default function EditShortsBriefPage() {
 
   function addScene() {
     setScenes((prev) => [...prev, makeScene(prev.length)])
+  }
+
+  function addSceneForClip(clipIndex: number) {
+    setScenes((prev) => {
+      const next = [...prev]
+      // Pad with empty scenes up to the required index
+      while (next.length <= clipIndex) next.push(makeScene(next.length))
+      return next
+    })
   }
 
   async function handleSave() {
@@ -435,6 +473,66 @@ export default function EditShortsBriefPage() {
               className="w-full resize-y rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text placeholder:text-fantom-text-muted/60 focus:outline-none focus:ring-2 focus:ring-fantom-blue disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>
+
+          {/* Clip → Scene map (shows when clips are selected) */}
+          {sourceAssetIds.length > 0 && (
+            <div className="space-y-1.5">
+              <Label>Clip → Scene Map</Label>
+              <p className="text-xs text-fantom-text-muted">
+                Scene {1} plays over Clip {1}, Scene {2} over Clip {2}, etc. Clips without a mapped scene play with original audio.
+              </p>
+              <div className="space-y-1">
+                {sourceAssetIds.map((assetId, clipIndex) => {
+                  const clip = clipMetaMap[assetId]
+                  const scene = scenes[clipIndex]
+                  const hasMappedScene = Boolean(scene?.description?.trim())
+                  return (
+                    <div
+                      key={assetId}
+                      className="flex flex-wrap items-center gap-1.5 rounded-fantom border border-fantom-steel-border bg-fantom-steel/20 px-3 py-2 text-sm"
+                    >
+                      <span className="font-medium text-fantom-text-muted flex-shrink-0">
+                        Clip {clipIndex + 1}
+                        {clip && (
+                          <span className="ml-1 text-xs font-normal text-fantom-text-muted/60">
+                            {clip.originalFilename}
+                            {clip.durationSeconds ? ` · ${fmtDuration(clip.durationSeconds)}` : ''}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-fantom-text-muted/40 flex-shrink-0">→</span>
+                      {hasMappedScene ? (
+                        <span className="text-fantom-text line-clamp-1 flex-1">{scene!.description}</span>
+                      ) : (
+                        <>
+                          <span className="flex-1 text-xs italic text-fantom-text-muted/60">
+                            No scene mapped — original audio will play
+                          </span>
+                          {!isLocked && (
+                            <button
+                              type="button"
+                              onClick={() => addSceneForClip(clipIndex)}
+                              className="ml-auto flex-shrink-0 text-xs text-fantom-blue hover:underline"
+                            >
+                              + Add scene
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+              {scenes.filter(s => s.description.trim()).length > sourceAssetIds.length && (
+                <div className="flex items-start gap-2 rounded-fantom border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+                  {(() => {
+                    const extra = scenes.filter(s => s.description.trim()).length - sourceAssetIds.length
+                    return `${extra} scene${extra !== 1 ? 's' : ''} past the last clip — VO for those scenes will be skipped.`
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Scene blocks */}
           <div className="space-y-2">

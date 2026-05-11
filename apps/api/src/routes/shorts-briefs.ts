@@ -236,7 +236,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Compute estimates and run validation
       const briefForValidation = toBriefForValidation(brief)
-      const estimates = estimateBriefCost(briefForValidation)
+      const estimates = estimateBriefCost(briefForValidation, clips.length)
       const validation = validateBriefForReady(briefForValidation, clips)
 
       return reply.send({
