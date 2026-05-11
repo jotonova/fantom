@@ -2,7 +2,7 @@ import { and, desc, eq, gte, lt, sql } from 'drizzle-orm'
 import fp from 'fastify-plugin'
 import type { FastifyPluginAsync } from 'fastify'
 import { db, events, tenants } from '@fantom/db'
-import { checkStorageHealth } from '@fantom/storage'
+import { checkStorageHealth, generatePresignedPutForKey } from '@fantom/storage'
 import { Redis } from 'ioredis'
 import { getMetricsSnapshot, getAllTenantSummaries, logEventAwaitable } from '@fantom/observability'
 import { requirePlatformAdmin } from '../plugins/admin-auth.js'
@@ -169,6 +169,38 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
     const healthy = Object.values(checks).every((c) => c.healthy)
     return reply.send({ services: checks, healthy, timestamp: new Date().toISOString() })
+  })
+
+  // POST /admin/music-upload-urls ─────────────────────────────────────────────
+  // Returns presigned PUT URLs for R2 music library uploads.
+  // Caller PUTs each MP3 directly to R2 — no credentials needed on the client.
+  fastify.post<{
+    Body: { slugs?: string[] }
+  }>('/admin/music-upload-urls', { preHandler: requirePlatformAdmin }, async (request, reply) => {
+    const VALID_SLUGS = new Set([
+      'upbeat-corporate', 'summer-vibes', 'acoustic-upbeat', 'upbeat-pop',
+      'upbeat-country', 'chill-lofi', 'cinematic-rise', 'epic-motivation',
+      'soft-piano-bg', 'ambient-nature', 'tech-minimal',
+    ])
+
+    const requested = Array.isArray(request.body?.slugs)
+      ? request.body.slugs
+      : [...VALID_SLUGS]
+
+    const invalid = requested.filter((s) => !VALID_SLUGS.has(s))
+    if (invalid.length > 0) {
+      return reply.code(400).send({ error: `Unknown slugs: ${invalid.join(', ')}` })
+    }
+
+    const uploads = await Promise.all(
+      requested.map(async (slug) => {
+        const r2Key = `shared/music-library/${slug}.mp3`
+        const { url, expiresAt } = await generatePresignedPutForKey(r2Key, 'audio/mpeg', 600)
+        return { slug, r2Key, url, expiresAt: expiresAt.toISOString() }
+      }),
+    )
+
+    return reply.send({ uploads })
   })
 
   // POST /admin/alerts/test ────────────────────────────────────────────────────

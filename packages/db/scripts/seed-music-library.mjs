@@ -2,28 +2,23 @@
 /**
  * seed-music-library.mjs
  *
- * Uploads Pixabay MP3s to R2 at shared/music-library/{slug}.mp3.
- * Uses the compiled @fantom/storage package (relative path) so no extra deps needed.
+ * Uploads Pixabay MP3s to R2 via pre-signed PUT URLs from the prod API.
+ * No R2 credentials needed locally — they stay server-side.
  *
- * Usage — run from the repo root:
+ * Prerequisites — add to .env.local (or export before running):
+ *   ADMIN_EMAIL=your-admin@email.com
+ *   ADMIN_PASSWORD=your-password
+ *   FANTOM_API_BASE=https://fantom-api.onrender.com   ← already in .env.local
+ *
+ * Usage (run from repo root):
  *   set -a; source .env.local; set +a
  *   node packages/db/scripts/seed-music-library.mjs ~/Desktop/Pixabay\ Music/
  */
 
-import { statSync } from 'node:fs'
+import { statSync, createReadStream } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
-// Import the compiled storage package via relative path — avoids needing
-// @aws-sdk/client-s3 installed locally in packages/db.
-const { putObjectFromFile, getObjectMetadata } = await import(
-  join(__dirname, '../../storage/dist/index.js')
-)
-
-// slug → source filename in Justin's Pixabay Music folder
+// slug → exact filename in Justin's Pixabay Music folder
 const TRACK_MAP = [
   { slug: 'upbeat-corporate', file: 'upbeat-corporate.mp3' },
   { slug: 'summer-vibes',     file: 'dance-summer-vibe.mp3' },
@@ -36,59 +31,119 @@ const TRACK_MAP = [
   { slug: 'soft-piano-bg',    file: 'Soft piano.mp3' },
   { slug: 'ambient-nature',   file: 'Ambient-background.mp3' },
   { slug: 'tech-minimal',     file: 'Minimal Tech.mp3' },
-  // Upbeat-Motion.mp3 intentionally excluded — 11s, too short to loop
 ]
+
+// ── Env + args ────────────────────────────────────────────────────────────────
+
+const API_BASE = (process.env['FANTOM_API_BASE'] ?? '').replace(/\/$/, '')
+const ADMIN_EMAIL = process.env['ADMIN_EMAIL'] ?? ''
+const ADMIN_PASSWORD = process.env['ADMIN_PASSWORD'] ?? ''
+
+if (!API_BASE || !ADMIN_EMAIL || !ADMIN_PASSWORD) {
+  console.error(`
+Missing required env vars. Add to .env.local:
+  FANTOM_API_BASE=https://fantom-api.onrender.com
+  ADMIN_EMAIL=your-admin@email.com
+  ADMIN_PASSWORD=your-password
+
+Then run:
+  set -a; source .env.local; set +a
+  node packages/db/scripts/seed-music-library.mjs ~/Desktop/Pixabay\\ Music/
+`)
+  process.exit(1)
+}
 
 const dir = process.argv[2]
 if (!dir) {
   console.error('Usage: node packages/db/scripts/seed-music-library.mjs "/path/to/Pixabay Music/"')
   process.exit(1)
 }
-
 const musicDir = resolve(dir)
 
-async function r2KeyExists(r2Key) {
-  try {
-    await getObjectMetadata(r2Key)
-    return true
-  } catch {
-    return false
-  }
-}
+// ── Step 1: Login to get admin JWT ────────────────────────────────────────────
 
-async function upload({ slug, file }) {
+process.stdout.write('Logging in… ')
+const loginRes = await fetch(`${API_BASE}/auth/login`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+})
+if (!loginRes.ok) {
+  const body = await loginRes.text()
+  console.error(`FAILED (${loginRes.status}): ${body}`)
+  process.exit(1)
+}
+const { accessToken } = await loginRes.json()
+console.log('OK')
+
+// ── Step 2: Get presigned PUT URLs ────────────────────────────────────────────
+
+process.stdout.write('Fetching presigned upload URLs… ')
+const urlRes = await fetch(`${API_BASE}/admin/music-upload-urls`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${accessToken}`,
+  },
+  body: JSON.stringify({ slugs: TRACK_MAP.map((t) => t.slug) }),
+})
+if (!urlRes.ok) {
+  const body = await urlRes.text()
+  console.error(`FAILED (${urlRes.status}): ${body}`)
+  process.exit(1)
+}
+const { uploads } = await urlRes.json()
+console.log(`OK (${uploads.length} URLs, expire in 10 min)`)
+console.log()
+
+// Build a slug → url map
+const urlMap = Object.fromEntries(uploads.map((u) => [u.slug, u.url]))
+
+// ── Step 3: Upload each file ──────────────────────────────────────────────────
+
+let ok = 0
+let skipped = 0
+let failed = 0
+
+for (const { slug, file } of TRACK_MAP) {
   const localPath = join(musicDir, file)
-  const r2Key = `shared/music-library/${slug}.mp3`
+  const putUrl = urlMap[slug]
 
   let size
   try {
     size = statSync(localPath).size
   } catch {
     console.error(`  SKIP  ${slug} — file not found: ${localPath}`)
-    return false
+    skipped++
+    continue
   }
 
-  if (await r2KeyExists(r2Key)) {
-    console.log(`  EXISTS ${r2Key} — skipping`)
-    return true
+  process.stdout.write(`  PUT   ${slug} (${(size / 1024).toFixed(0)} KB)… `)
+
+  // Node 18+ fetch doesn't support ReadableStream from fs.createReadStream directly.
+  // Read the file into a Buffer for the PUT body.
+  const { readFile } = await import('node:fs/promises')
+  const body = await readFile(localPath)
+
+  const putRes = await fetch(putUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': String(size),
+    },
+    body,
+  })
+
+  if (putRes.ok || putRes.status === 200) {
+    console.log('OK')
+    ok++
+  } else {
+    const errBody = await putRes.text()
+    console.log(`FAILED (${putRes.status}): ${errBody.slice(0, 120)}`)
+    failed++
   }
-
-  console.log(`  UPLOAD ${file} → ${r2Key} (${(size / 1024).toFixed(0)} KB)`)
-  await putObjectFromFile(r2Key, localPath, 'audio/mpeg')
-  console.log(`  OK     ${r2Key}`)
-  return true
-}
-
-console.log(`Uploading ${TRACK_MAP.length} tracks to R2`)
-console.log(`Source:   ${musicDir}`)
-console.log()
-
-let ok = 0
-let skipped = 0
-for (const track of TRACK_MAP) {
-  const uploaded = await upload(track)
-  if (uploaded) ok++; else skipped++
 }
 
 console.log()
-console.log(`Done — ${ok} uploaded/already-present, ${skipped} skipped (file not found).`)
+console.log(`Done — ${ok} uploaded, ${skipped} skipped, ${failed} failed.`)
+if (failed > 0) process.exit(1)

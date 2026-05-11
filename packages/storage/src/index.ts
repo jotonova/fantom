@@ -82,6 +82,26 @@ export async function generateDownloadUrl(
   return getSignedUrl(r2, command, { expiresIn })
 }
 
+/**
+ * Generates a presigned PUT URL for a specific, caller-supplied R2 key.
+ * Used for admin-side uploads (e.g. seeding the music library) where the
+ * destination key is predetermined rather than derived from tenant/kind/filename.
+ */
+export async function generatePresignedPutForKey(
+  r2Key: string,
+  contentType: string,
+  expiresIn = 600,
+): Promise<{ url: string; expiresAt: Date }> {
+  const command = new PutObjectCommand({
+    Bucket: bucketName(),
+    Key: r2Key,
+    ContentType: contentType,
+  })
+  const url = await getSignedUrl(r2, command, { expiresIn })
+  const expiresAt = new Date(Date.now() + expiresIn * 1000)
+  return { url, expiresAt }
+}
+
 export async function generateUploadUrl(
   tenantSlug: string,
   kind: string,
