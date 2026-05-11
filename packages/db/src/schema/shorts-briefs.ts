@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { check, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { brandKits } from './brand-kits.js'
+import { musicTracks } from './music-tracks.js'
 import { tenants } from './tenants.js'
 import { users } from './users.js'
 
@@ -25,11 +26,14 @@ export const shortsBriefs = pgTable(
     title: text('title').notNull(),
     description: text('description'),
 
-    // Voice & Brand
+    // Voice, Brand & Music
     brandKitId: uuid('brand_kit_id').references(() => brandKits.id, {
       onDelete: 'set null',
     }),
     voiceCloneId: text('voice_clone_id'), // ElevenLabs voice ID — not a FK
+    musicTrackId: uuid('music_track_id').references(() => musicTracks.id, {
+      onDelete: 'set null',
+    }),
 
     // Duration (15 | 30 | 45 | 60)
     durationSeconds: integer('duration_seconds').notNull().default(30),

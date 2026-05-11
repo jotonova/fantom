@@ -59,6 +59,7 @@ interface PreviewData {
   clips: PreviewClip[]
   brandKitName: string | null
   voiceCloneName: string | null
+  musicTrackName: string | null
   estimates: CostEstimate
   validation: ValidationResult
 }
@@ -225,7 +226,7 @@ export default function PreviewPage() {
     )
   }
 
-  const { brief, clips, brandKitName, voiceCloneName, estimates, validation } = data!
+  const { brief, clips, brandKitName, voiceCloneName, musicTrackName, estimates, validation } = data!
   const { blockers, warnings, info } = validation
   const hasValidationIssues = blockers.length > 0 || warnings.length > 0 || info.length > 0
   const canMarkReady = brief.status === 'draft' && blockers.length === 0
@@ -279,6 +280,10 @@ export default function PreviewPage() {
             <div>
               <span className="block text-xs text-fantom-text-muted">Voice</span>
               <span className="text-fantom-text">{voiceCloneName ?? <em className="text-fantom-text-muted">None</em>}</span>
+            </div>
+            <div>
+              <span className="block text-xs text-fantom-text-muted">Music</span>
+              <span className="text-fantom-text">{musicTrackName ?? <em className="text-fantom-text-muted">None</em>}</span>
             </div>
           </div>
 

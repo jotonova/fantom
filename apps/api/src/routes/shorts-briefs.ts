@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm'
 import fp from 'fastify-plugin'
 import type { FastifyPluginAsync } from 'fastify'
-import { db, shortsBriefs, shortsRenders, assets, brandKits, voiceClones } from '@fantom/db'
+import { db, shortsBriefs, shortsRenders, assets, brandKits, voiceClones, musicTracks } from '@fantom/db'
 import type { ShortsBrief, ShortsRender } from '@fantom/db'
 import { getPublicUrl, deleteObject } from '@fantom/storage'
 import { enqueueShortsBriefRender } from '@fantom/jobs'
@@ -34,6 +34,7 @@ function toBriefForValidation(brief: ShortsBrief): BriefForValidation {
     sourceAssetIds: brief.sourceAssetIds,
     voiceCloneId: brief.voiceCloneId,
     brandKitId: brief.brandKitId,
+    musicTrackId: brief.musicTrackId,
     opening: brief.opening,
     openingVoiceoverScript: brief.openingVoiceoverScript,
     mainScenes: Array.isArray(brief.mainScenes) ? brief.mainScenes : null,
@@ -54,6 +55,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       sourceAssetIds?: string[]
       brandKitId?: string | null
       voiceCloneId?: string | null
+      musicTrackId?: string | null
       durationSeconds?: number
       opening?: string | null
       openingVoiceoverScript?: string | null
@@ -94,6 +96,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
           sourceAssetIds,
           brandKitId: body.brandKitId ?? null,
           voiceCloneId: body.voiceCloneId ?? null,
+          musicTrackId: body.musicTrackId ?? null,
           durationSeconds,
           opening: body.opening ?? null,
           openingVoiceoverScript: body.openingVoiceoverScript ?? null,
@@ -215,6 +218,17 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
         brandKitName = kit?.name ?? null
       }
 
+      // Resolve music track name
+      let musicTrackName: string | null = null
+      if (brief.musicTrackId) {
+        const [track] = await db
+          .select({ title: musicTracks.title, isActive: musicTracks.isActive })
+          .from(musicTracks)
+          .where(eq(musicTracks.id, brief.musicTrackId))
+          .limit(1)
+        musicTrackName = track?.title ?? null
+      }
+
       // Resolve voice clone name (voiceCloneId stores the ElevenLabs providerVoiceId)
       let voiceCloneName: string | null = null
       if (brief.voiceCloneId) {
@@ -244,6 +258,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
         clips,
         brandKitName,
         voiceCloneName,
+        musicTrackName,
         estimates,
         validation,
       })
@@ -440,6 +455,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       sourceAssetIds?: string[]
       brandKitId?: string | null
       voiceCloneId?: string | null
+      musicTrackId?: string | null
       durationSeconds?: number
       opening?: string | null
       openingVoiceoverScript?: string | null
@@ -542,6 +558,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if ('brandKitId' in body) patch.brandKitId = body.brandKitId ?? null
       if ('voiceCloneId' in body) patch.voiceCloneId = body.voiceCloneId ?? null
+      if ('musicTrackId' in body) patch.musicTrackId = body.musicTrackId ?? null
       if (typeof body.durationSeconds === 'number') {
         if (!VALID_DURATIONS.has(body.durationSeconds)) {
           return reply.code(400).send({ error: 'durationSeconds must be 15, 30, 45, or 60' })

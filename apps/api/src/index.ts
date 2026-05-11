@@ -18,6 +18,7 @@ import adminRoutes from './routes/admin.js'
 import healthRoutes from './routes/health.js'
 import eventsRoutes from './routes/events.js'
 import brandKitRoutes from './routes/brand-kits.js'
+import musicTrackRoutes from './routes/music-tracks.js'
 import shortsRoutes from './routes/shorts.js'
 import shortsBriefRoutes from './routes/shorts-briefs.js'
 import shortsRenderRoutes from './routes/shorts-renders.js'
@@ -102,6 +103,7 @@ await server.register(adminRoutes)
 await server.register(healthRoutes)
 await server.register(eventsRoutes)
 await server.register(brandKitRoutes)
+await server.register(musicTrackRoutes)
 await server.register(shortsRoutes)
 await server.register(shortsBriefRoutes)
 await server.register(shortsRenderRoutes)

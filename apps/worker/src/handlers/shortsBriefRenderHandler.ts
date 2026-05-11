@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Job as BullJob } from 'bullmq'
 import type { ShortsRenderPayload } from '@fantom/jobs'
-import { putObjectFromFile } from '@fantom/storage'
+import { putObjectFromFile, getObjectToFile } from '@fantom/storage'
 import { logEvent } from '@fantom/observability'
 import { assembleShortFromBrief } from '../lib/assembleShort.js'
 import { generateVO } from '../lib/generateVO.js'
@@ -20,6 +20,7 @@ import {
   createShortsRenderedAsset,
   getTenantSlug,
 } from '../lib/db.js'
+import { db, getMusicTrackById } from '@fantom/db'
 
 const execFileAsync = promisify(execFile)
 
@@ -186,6 +187,10 @@ export async function handleShortsBriefRender(
         : []),
     ]
 
+    // ── VO generation ────────────────────────────────────────────────────────
+
+    let voFilesWithOffsets: VOFileWithOffset[] = []
+
     if (brief.voiceCloneId && voScenes.length > 0) {
       await checkCancelled(renderId, tenantId)
 
@@ -199,17 +204,13 @@ export async function handleShortsBriefRender(
       })
 
       if (voFiles.length > 0) {
-        await checkCancelled(renderId, tenantId)
-
-        // ── Compute clip-position offsets ───────────────────────────────────
+        // ── Compute clip-position offsets ─────────────────────────────────
         // assembly.clipStartTimes[i] = seconds into the assembled video where
         // clip i begins. Scene[i] maps 1:1 to clip[i].
 
         const { clipStartTimes, clipDurations, actualDurationSeconds } = assembly
         const clipCount = clipStartTimes.length
 
-        // How many scene VOs are in voFiles (excludes opening/closing)?
-        // voFiles preserves the voScenes order: opening?, scene…, closing?
         let openingDurationMs = 0
         if (hasOpeningVO) {
           const openingFile = voFiles.find((f) => f.sceneId === 'opening')
@@ -222,11 +223,7 @@ export async function handleShortsBriefRender(
           if (closingFile) closingDurationMs = await probeAudioMs(closingFile.audioPath)
         }
 
-        // Track which scene index each scene-VO file corresponds to.
-        // voFiles are in voScenes order: opening(opt), scene…, closing(opt).
-        let sceneVoIdx = 0 // 0-based index into scenes[] for non-opening/closing VOs
-
-        const voFilesWithOffsets: VOFileWithOffset[] = []
+        let sceneVoIdx = 0
 
         for (const vf of voFiles) {
           if (vf.sceneId === 'opening') {
@@ -235,8 +232,6 @@ export async function handleShortsBriefRender(
           }
 
           if (vf.sceneId === 'closing') {
-            // Place closing VO so it ends at video end.
-            // Floor at last clip's start time (prevents negative or pre-last-clip placement).
             const lastClipStartMs = (clipStartTimes[clipCount - 1] ?? 0) * 1000
             const closingOffsetMs = Math.max(
               actualDurationSeconds * 1000 - closingDurationMs,
@@ -250,9 +245,7 @@ export async function handleShortsBriefRender(
             continue
           }
 
-          // Scene VO — maps to scenes[sceneVoIdx], which plays over clip[sceneVoIdx].
           const clipIdx = sceneVoIdx
-
           if (clipIdx >= clipCount) {
             log(
               `  WARNING: scene VO "${vf.sceneId}" (index ${clipIdx}) has no clip — ` +
@@ -264,10 +257,9 @@ export async function handleShortsBriefRender(
 
           let offsetMs: number
           if (clipIdx === 0 && hasOpeningVO) {
-            // Opening VO plays first inside clip 1; scene 1 VO starts right after.
             offsetMs = openingDurationMs
             const clip1EndMs = (clipStartTimes[0]! + clipDurations[0]!) * 1000
-            if (openingDurationMs + /* rough estimate */ 0 > clip1EndMs) {
+            if (openingDurationMs > clip1EndMs) {
               log(`  WARNING: opening VO may overflow clip 1 duration`)
             }
           } else {
@@ -280,15 +272,46 @@ export async function handleShortsBriefRender(
           )
           sceneVoIdx++
         }
-
-        log(`mixing ${voFilesWithOffsets.length} VO segment(s) into video`)
-        finalOutputPath = await mixVoiceover({
-          videoPath: assembly.outputPath,
-          voFiles: voFilesWithOffsets,
-          workDir,
-          log,
-        })
       }
+    }
+
+    // ── Music track fetch ─────────────────────────────────────────────────────
+    // Music is independent of VO — a brief may have music but no voice, or both.
+
+    let musicLayer: { localPath: string; slug: string; videoDurationSeconds: number } | undefined
+    if (brief.musicTrackId) {
+      const track = await getMusicTrackById(db, brief.musicTrackId)
+      if (!track) {
+        log(`WARNING: music_track_id ${brief.musicTrackId} not found — rendering without music`)
+      } else if (!track.isActive) {
+        log(`WARNING: music track "${track.slug}" is inactive — rendering without music`)
+      } else {
+        const musicLocalPath = join(workDir, `music_${track.slug}.mp3`)
+        log(`downloading music track: ${track.r2Key}`)
+        await getObjectToFile(track.r2Key, musicLocalPath)
+        musicLayer = {
+          localPath: musicLocalPath,
+          slug: track.slug,
+          videoDurationSeconds: assembly.actualDurationSeconds,
+        }
+      }
+    }
+
+    // ── Audio mix ─────────────────────────────────────────────────────────────
+
+    if (voFilesWithOffsets.length > 0 || musicLayer) {
+      await checkCancelled(renderId, tenantId)
+      log(
+        `audio mix: ${voFilesWithOffsets.length} VO segment(s)` +
+          (musicLayer ? ` + music (${musicLayer.slug})` : ''),
+      )
+      finalOutputPath = await mixVoiceover({
+        videoPath: assembly.outputPath,
+        voFiles: voFilesWithOffsets,
+        workDir,
+        log,
+        ...(musicLayer !== undefined && { music: musicLayer }),
+      })
     }
 
     // ── Upload to R2 ──────────────────────────────────────────────────────────
@@ -320,6 +343,7 @@ export async function handleShortsBriefRender(
         targetDurationS: brief.durationSeconds,
         actualDurationS: assembly.actualDurationSeconds,
         hasVO: voScenes.length > 0 && Boolean(brief.voiceCloneId),
+        musicTrackSlug: musicLayer?.slug ?? null,
       },
     })
 
@@ -354,6 +378,7 @@ export async function handleShortsBriefRender(
         actualDurationS: assembly.actualDurationSeconds,
         targetDurationS: brief.durationSeconds,
         hasVO: voScenes.length > 0 && Boolean(brief.voiceCloneId),
+        musicTrackSlug: musicLayer?.slug ?? null,
       },
     })
 

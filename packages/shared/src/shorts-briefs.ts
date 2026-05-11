@@ -27,6 +27,7 @@ export const CreateShortsBriefSchema = z.object({
   sourceAssetIds: z.array(z.string().uuid()).min(1, 'At least one source asset is required'),
   brandKitId: z.string().uuid().optional(),
   voiceCloneId: z.string().optional(),
+  musicTrackId: z.string().uuid().nullable().optional(),
   durationSeconds: z.union([z.literal(15), z.literal(30), z.literal(45), z.literal(60)]).default(30),
   opening: z.string().max(2000).optional(),
   openingVoiceoverScript: z.string().max(5000).nullable().optional(),
@@ -42,6 +43,7 @@ export const UpdateShortsBriefSchema = z.object({
   sourceAssetIds: z.array(z.string().uuid()).min(1).optional(),
   brandKitId: z.string().uuid().nullable().optional(),
   voiceCloneId: z.string().nullable().optional(),
+  musicTrackId: z.string().uuid().nullable().optional(),
   durationSeconds: z.union([z.literal(15), z.literal(30), z.literal(45), z.literal(60)]).optional(),
   opening: z.string().max(2000).nullable().optional(),
   openingVoiceoverScript: z.string().max(5000).nullable().optional(),
@@ -62,6 +64,7 @@ export interface BriefForValidation {
   sourceAssetIds: string[]
   voiceCloneId: string | null
   brandKitId: string | null
+  musicTrackId?: string | null
   opening: string | null
   openingVoiceoverScript: string | null
   mainScenes: Array<{ id: string; description: string; voiceover_script?: string }> | null
