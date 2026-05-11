@@ -28,6 +28,15 @@ interface VoiceClone {
   providerVoiceId: string | null
 }
 
+interface MusicTrack {
+  id: string
+  slug: string
+  title: string
+  mood: string | null
+  durationSeconds: number | null
+  previewUrl: string
+}
+
 // ── Scene helpers ─────────────────────────────────────────────────────────────
 
 function makeScene(index: number): Scene {
@@ -114,10 +123,13 @@ export default function NewShortsBriefPage() {
   const [sourceAssetIds, setSourceAssetIds] = useState<string[]>([])
   const [brandKitId, setBrandKitId] = useState<string>('')
   const [voiceCloneId, setVoiceCloneId] = useState<string>('')
+  const [musicTrackId, setMusicTrackId] = useState<string>('')
 
   // Reference data
   const [brandKits, setBrandKits] = useState<BrandKit[]>([])
   const [voices, setVoices] = useState<VoiceClone[]>([])
+  const [musicTracks, setMusicTracks] = useState<MusicTrack[]>([])
+  const [previewingTrackId, setPreviewingTrackId] = useState<string | null>(null)
 
   // UI state
   const [saving, setSaving] = useState(false)
@@ -130,6 +142,10 @@ export default function NewShortsBriefPage() {
 
     apiFetch<{ voices: VoiceClone[] }>('/voices')
       .then((r) => setVoices((r.voices ?? []).filter((v) => v.status === 'ready')))
+      .catch(() => {})
+
+    apiFetch<{ musicTracks: MusicTrack[] }>('/music-tracks')
+      .then((r) => setMusicTracks(r.musicTracks ?? []))
       .catch(() => {})
   }, [])
 
@@ -183,6 +199,7 @@ export default function NewShortsBriefPage() {
           sourceAssetIds,
           brandKitId: brandKitId || null,
           voiceCloneId: voiceCloneId || null,
+          musicTrackId: musicTrackId || null,
         }),
       })
       router.push(`/studio/shorts/${brief.id}/edit`)
@@ -431,6 +448,56 @@ export default function NewShortsBriefPage() {
                 ))}
               </select>
             )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="music">Background Music</Label>
+            <p className="text-xs text-fantom-text-muted">
+              Plays under the voiceover, ducked during speech. Optional.
+            </p>
+            <select
+              id="music"
+              value={musicTrackId}
+              onChange={(e) => {
+                setMusicTrackId(e.target.value)
+                setPreviewingTrackId(null)
+              }}
+              className="w-full rounded-fantom border border-fantom-steel-border bg-fantom-steel px-3 py-2 text-sm text-fantom-text focus:outline-none focus:ring-2 focus:ring-fantom-blue"
+            >
+              <option value="">— none —</option>
+              {musicTracks.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.title}{t.mood ? ` · ${t.mood}` : ''}{t.durationSeconds ? ` (${Math.floor(t.durationSeconds / 60)}:${String(t.durationSeconds % 60).padStart(2, '0')})` : ''}
+                </option>
+              ))}
+            </select>
+            {musicTrackId && (() => {
+              const track = musicTracks.find((t) => t.id === musicTrackId)
+              if (!track) return null
+              return (
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPreviewingTrackId((prev) => (prev === track.id ? null : track.id))
+                    }
+                    className="text-xs text-fantom-blue hover:underline"
+                  >
+                    {previewingTrackId === track.id ? 'Stop preview' : 'Preview'}
+                  </button>
+                  {previewingTrackId === track.id && (
+                    <audio
+                      key={track.id}
+                      src={track.previewUrl}
+                      autoPlay
+                      controls
+                      onEnded={() => setPreviewingTrackId(null)}
+                      className="h-7 flex-1 min-w-0"
+                    />
+                  )}
+                </div>
+              )
+            })()}
           </div>
         </CardContent>
       </Card>
