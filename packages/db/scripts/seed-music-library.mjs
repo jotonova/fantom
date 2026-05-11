@@ -2,42 +2,35 @@
 /**
  * seed-music-library.mjs
  *
- * Uploads local MP3 files to R2 at the paths expected by migration 0028.
+ * Uploads Pixabay MP3s from a local directory to R2 at shared/music-library/{slug}.mp3.
+ * Uses an explicit slug → source-filename map so Justin doesn't have to rename anything.
  *
  * Usage:
  *   R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET_NAME=... \
- *     node packages/db/scripts/seed-music-library.mjs /path/to/music-files/
+ *     node packages/db/scripts/seed-music-library.mjs "/path/to/Pixabay Music/"
  *
- * The directory must contain files named exactly:
- *   upbeat-corporate.mp3
- *   summer-vibes.mp3
- *   acoustic-morning.mp3
- *   cinematic-rise.mp3
- *   chill-lofi.mp3
- *   epic-motivation.mp3
- *   soft-piano-bg.mp3
- *   tech-minimal.mp3
- *   upbeat-pop.mp3
- *   ambient-nature.mp3
- *
- * R2 destination: shared/music-library/{slug}.mp3
+ * R2 creds are in .env.local — you can source them first:
+ *   set -a; source .env.local; set +a
  */
 
 import { createReadStream, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 
-const SLUGS = [
-  'upbeat-corporate',
-  'summer-vibes',
-  'acoustic-morning',
-  'cinematic-rise',
-  'chill-lofi',
-  'epic-motivation',
-  'soft-piano-bg',
-  'tech-minimal',
-  'upbeat-pop',
-  'ambient-nature',
+// slug → source filename in Justin's Pixabay Music folder
+const TRACK_MAP = [
+  { slug: 'upbeat-corporate', file: 'upbeat-corporate.mp3' },
+  { slug: 'summer-vibes',     file: 'dance-summer-vibe.mp3' },
+  { slug: 'acoustic-upbeat',  file: 'acoustic-upbeat.mp3' },
+  { slug: 'upbeat-pop',       file: 'Pop-upbeat.mp3' },
+  { slug: 'upbeat-country',   file: 'Upbeat-Country.mp3' },
+  { slug: 'chill-lofi',       file: 'Chill.mp3' },
+  { slug: 'cinematic-rise',   file: 'cinematic-rise.mp3' },
+  { slug: 'epic-motivation',  file: 'Epic motivation.mp3' },
+  { slug: 'soft-piano-bg',    file: 'Soft piano.mp3' },
+  { slug: 'ambient-nature',   file: 'Ambient-background.mp3' },
+  { slug: 'tech-minimal',     file: 'Minimal Tech.mp3' },
+  // Upbeat-Motion.mp3 intentionally excluded — 11s, too short to loop
 ]
 
 const {
@@ -49,14 +42,15 @@ const {
 
 if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET_NAME) {
   console.error(
-    'Missing R2 env vars. Required: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME',
+    'Missing R2 env vars.\nRequired: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME\n' +
+    'Tip: set -a; source .env.local; set +a',
   )
   process.exit(1)
 }
 
 const dir = process.argv[2]
 if (!dir) {
-  console.error('Usage: node seed-music-library.mjs /path/to/music-files/')
+  console.error('Usage: node packages/db/scripts/seed-music-library.mjs "/path/to/Pixabay Music/"')
   process.exit(1)
 }
 
@@ -79,25 +73,24 @@ async function fileExists(r2Key) {
   }
 }
 
-async function upload(slug) {
-  const localPath = join(musicDir, `${slug}.mp3`)
+async function upload({ slug, file }) {
+  const localPath = join(musicDir, file)
   const r2Key = `shared/music-library/${slug}.mp3`
 
   let size
   try {
     size = statSync(localPath).size
   } catch {
-    console.error(`  SKIP  ${slug}.mp3 — file not found at ${localPath}`)
-    return
+    console.error(`  SKIP  ${slug} — file not found: ${localPath}`)
+    return false
   }
 
-  const alreadyUploaded = await fileExists(r2Key)
-  if (alreadyUploaded) {
+  if (await fileExists(r2Key)) {
     console.log(`  EXISTS ${r2Key} — skipping`)
-    return
+    return true
   }
 
-  console.log(`  UPLOAD ${slug}.mp3 (${(size / 1024).toFixed(0)} KB) → ${r2Key}`)
+  console.log(`  UPLOAD ${file} → ${r2Key} (${(size / 1024).toFixed(0)} KB)`)
   await client.send(
     new PutObjectCommand({
       Bucket: R2_BUCKET_NAME,
@@ -107,16 +100,20 @@ async function upload(slug) {
       ContentLength: size,
     }),
   )
-  console.log(`  DONE   ${r2Key}`)
+  console.log(`  OK     ${r2Key}`)
+  return true
 }
 
-console.log(`Uploading music library to R2 bucket: ${R2_BUCKET_NAME}`)
-console.log(`Source directory: ${musicDir}`)
+console.log(`Uploading ${TRACK_MAP.length} tracks to R2 bucket: ${R2_BUCKET_NAME}`)
+console.log(`Source:   ${musicDir}`)
 console.log()
 
-for (const slug of SLUGS) {
-  await upload(slug)
+let ok = 0
+let skipped = 0
+for (const track of TRACK_MAP) {
+  const uploaded = await upload(track)
+  if (uploaded) ok++; else skipped++
 }
 
 console.log()
-console.log('Done.')
+console.log(`Done — ${ok} uploaded/already-present, ${skipped} skipped (file not found).`)
