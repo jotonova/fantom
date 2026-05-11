@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { apiFetch, ApiError } from '../../../../../../src/lib/api-client'
 import { Badge, Button, Spinner } from '@fantom/ui'
@@ -59,18 +59,25 @@ export default function RenderStatusPage() {
   const [cancelling, setCancelling] = useState(false)
   const [unlocking, setUnlocking] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // Track whether we've successfully loaded render data at least once.
+  // Polling errors after the first successful load are silently ignored so a
+  // transient network hiccup doesn't flash a red banner over an already-loaded page.
+  const hasLoadedOnce = useRef(false)
 
   const loadRender = useCallback(async () => {
     try {
       const r = await apiFetch<ShortsRender>(`/shorts-briefs/${id}/render`)
+      hasLoadedOnce.current = true
+      setError(null)
       setRender(r)
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
-        // No render yet — redirect to preview
-        router.replace(`/studio/shorts/${id}/preview`)
-      } else {
+        // No render found — only redirect on initial load; ignore during polling
+        if (!hasLoadedOnce.current) router.replace(`/studio/shorts/${id}/preview`)
+      } else if (!hasLoadedOnce.current) {
         setError('Failed to load render status')
       }
+      // Silently ignore errors after first successful load
     }
   }, [id, router])
 

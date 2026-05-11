@@ -62,7 +62,13 @@ export async function mixVoiceover(opts: {
   // ── Step 2: Mix VO over video ─────────────────────────────────────────────
   //
   // Filter graph:
-  //   [1:a]asplit → sends VO to both the mix bus [vo_mix] and the sidechain [vo_sc]
+  //   [1:a]apad → extend VO with silence to match video length.
+  //     Critical: sidechaincompress terminates its output when the sidechain
+  //     stream ends. Without apad, audio past the last VO segment is completely
+  //     silent because the compressor stops producing output as soon as [vo_sc]
+  //     exhausts. With silence-padded sidechain the threshold (0.02) is never
+  //     exceeded in the tail, so source audio passes through uncompressed.
+  //   [vo_padded]asplit → sends padded VO to mix bus [vo_mix] and sidechain [vo_sc]
   //   [0:a][vo_sc]sidechaincompress → compresses source audio when VO exceeds threshold
   //     threshold=0.02  (~-34dBFS): compression kicks in when VO is audible
   //     ratio=10        : heavy compression — net source attenuation ≈ -18dB in VO regions
@@ -77,7 +83,8 @@ export async function mixVoiceover(opts: {
   log('mixing VO with sidechain ducking and -16 LUFS normalization')
 
   const filterComplex = [
-    '[1:a]asplit[vo_mix][vo_sc]',
+    '[1:a]apad[vo_padded]',
+    '[vo_padded]asplit[vo_mix][vo_sc]',
     '[0:a][vo_sc]sidechaincompress=threshold=0.02:ratio=10:attack=5:release=200[src_ducked]',
     '[src_ducked][vo_mix]amix=inputs=2:duration=first:normalize=0[mixed]',
     '[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[normed]',
