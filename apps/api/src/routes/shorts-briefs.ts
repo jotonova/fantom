@@ -56,6 +56,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       brandKitId?: string | null
       voiceCloneId?: string | null
       musicTrackId?: string | null
+      captionsEnabled?: boolean
       durationSeconds?: number
       opening?: string | null
       openingVoiceoverScript?: string | null
@@ -97,6 +98,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
           brandKitId: body.brandKitId ?? null,
           voiceCloneId: body.voiceCloneId ?? null,
           musicTrackId: body.musicTrackId ?? null,
+          ...(typeof body.captionsEnabled === 'boolean' && { captionsEnabled: body.captionsEnabled }),
           durationSeconds,
           opening: body.opening ?? null,
           openingVoiceoverScript: body.openingVoiceoverScript ?? null,
@@ -456,6 +458,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       brandKitId?: string | null
       voiceCloneId?: string | null
       musicTrackId?: string | null
+      captionsEnabled?: boolean
       durationSeconds?: number
       opening?: string | null
       openingVoiceoverScript?: string | null
@@ -559,6 +562,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       if ('brandKitId' in body) patch.brandKitId = body.brandKitId ?? null
       if ('voiceCloneId' in body) patch.voiceCloneId = body.voiceCloneId ?? null
       if ('musicTrackId' in body) patch.musicTrackId = body.musicTrackId ?? null
+      if (typeof body.captionsEnabled === 'boolean') patch.captionsEnabled = body.captionsEnabled
       if (typeof body.durationSeconds === 'number') {
         if (!VALID_DURATIONS.has(body.durationSeconds)) {
           return reply.code(400).send({ error: 'durationSeconds must be 15, 30, 45, or 60' })

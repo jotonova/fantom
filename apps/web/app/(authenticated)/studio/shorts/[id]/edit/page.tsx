@@ -30,6 +30,7 @@ interface ShortsBrief {
   brandKitId: string | null
   voiceCloneId: string | null
   musicTrackId: string | null
+  captionsEnabled: boolean
   status: BriefStatus
   errorMessage: string | null
   createdAt: string
@@ -183,6 +184,7 @@ export default function EditShortsBriefPage() {
   const [brandKitId, setBrandKitId] = useState<string>('')
   const [voiceCloneId, setVoiceCloneId] = useState<string>('')
   const [musicTrackId, setMusicTrackId] = useState<string>('')
+  const [captionsEnabled, setCaptionsEnabled] = useState(true)
 
   // Reference data
   const [clipMetaMap, setClipMetaMap] = useState<Record<string, ClipMeta>>({})
@@ -217,6 +219,7 @@ export default function EditShortsBriefPage() {
         setBrandKitId(b.brandKitId ?? '')
         setVoiceCloneId(b.voiceCloneId ?? '')
         setMusicTrackId(b.musicTrackId ?? '')
+        setCaptionsEnabled(b.captionsEnabled)
       })
       .catch((err) => {
         setLoadError(err instanceof ApiError && err.status === 404 ? 'Brief not found' : 'Failed to load brief')
@@ -301,6 +304,7 @@ export default function EditShortsBriefPage() {
           brandKitId: brandKitId || null,
           voiceCloneId: voiceCloneId || null,
           musicTrackId: musicTrackId || null,
+          captionsEnabled,
         }),
       })
       setBrief(updated)
@@ -726,6 +730,35 @@ export default function EditShortsBriefPage() {
                 </div>
               )
             })()}
+          </div>
+
+          <div className="flex items-center justify-between gap-4 pt-1">
+            <div>
+              <Label htmlFor="captions">Burned-in Captions</Label>
+              <p className="text-xs text-fantom-text-muted">
+                Transcribed speech overlaid as styled text. No extra cost.
+              </p>
+            </div>
+            <button
+              id="captions"
+              type="button"
+              role="switch"
+              aria-checked={captionsEnabled}
+              onClick={() => !isLocked && setCaptionsEnabled((v) => !v)}
+              disabled={isLocked}
+              className={[
+                'relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-fantom-blue',
+                captionsEnabled ? 'bg-fantom-blue' : 'bg-fantom-steel-border',
+                isLocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+              ].join(' ')}
+            >
+              <span
+                className={[
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition-transform',
+                  captionsEnabled ? 'translate-x-4' : 'translate-x-0',
+                ].join(' ')}
+              />
+            </button>
           </div>
         </CardContent>
       </Card>

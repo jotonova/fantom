@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { check, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { brandKits } from './brand-kits.js'
 import { musicTracks } from './music-tracks.js'
 import { tenants } from './tenants.js'
@@ -52,6 +52,9 @@ export const shortsBriefs = pgTable(
       description: string
       voiceover_script?: string
     }>>(),
+
+    // Output options
+    captionsEnabled: boolean('captions_enabled').notNull().default(true),
 
     // Status
     status: text('status')

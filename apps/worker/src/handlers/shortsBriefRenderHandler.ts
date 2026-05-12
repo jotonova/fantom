@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, rm, stat } from 'node:fs/promises'
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -11,6 +11,8 @@ import { assembleShortFromBrief } from '../lib/assembleShort.js'
 import { generateVO } from '../lib/generateVO.js'
 import { mixVoiceover } from '../lib/voMix.js'
 import type { VOFileWithOffset } from '../lib/voMix.js'
+import { generateCaptionsForRender } from '../lib/generateCaptions.js'
+import type { CaptionVOSegment } from '../lib/generateCaptions.js'
 import {
   getShortsRenderRow,
   patchShortsRender,
@@ -314,6 +316,61 @@ export async function handleShortsBriefRender(
       })
     }
 
+    // ── Burned-in captions ────────────────────────────────────────────────────
+    // Runs after audio mix so the caption burn gets the fully-mixed audio track.
+    // Uses a second ffmpeg pass: -vf "ass=..." -c:a copy (audio untouched).
+
+    if (brief.captionsEnabled) {
+      await checkCancelled(renderId, tenantId)
+      log('generating captions…')
+
+      // Build per-clip caption inputs (transcript words shifted to video timeline)
+      const captionClips = clips.map((clip, i) => ({
+        transcriptWords: clip.transcriptWordTimestamps,
+        clipStartMsInVideo: (assembly.clipStartTimes[i] ?? 0) * 1000,
+      }))
+
+      // Build VO segments (probe each VO file for its duration)
+      const voSceneScriptMap = new Map(voScenes.map((s) => [s.id, s.voiceover_script]))
+      const captionVOSegments: CaptionVOSegment[] = []
+      for (const vf of voFilesWithOffsets) {
+        const script = voSceneScriptMap.get(vf.sceneId)
+        if (!script) continue
+        const durationMs = await probeAudioMs(vf.audioPath)
+        captionVOSegments.push({ script, startOffsetMs: vf.startOffsetMs, durationMs })
+      }
+
+      const assContent = await generateCaptionsForRender({
+        clips: captionClips,
+        voSegments: captionVOSegments,
+        videoDurationMs: assembly.actualDurationSeconds * 1000,
+        log,
+      })
+
+      const assPath = join(workDir, 'captions.ass')
+      await writeFile(assPath, assContent, 'utf-8')
+
+      const captionedPath = join(workDir, 'output_captioned.mp4')
+      log('burning captions into video…')
+      await execFileAsync(
+        'ffmpeg',
+        ['-i', finalOutputPath, '-vf', `ass=${assPath}`, '-c:a', 'copy', '-y', captionedPath],
+        { timeout: 120_000 },
+      )
+      finalOutputPath = captionedPath
+
+      const captionCount = (assContent.match(/^Dialogue:/gm) ?? []).length
+      logEvent({
+        tenantId,
+        kind: 'shorts.render.captions_burned',
+        severity: 'info',
+        subjectType: 'shorts_render',
+        subjectId: renderId,
+        metadata: { briefId, captionCount },
+      })
+      log(`captions burned — ${captionCount} segment(s)`)
+    }
+
     // ── Upload to R2 ──────────────────────────────────────────────────────────
 
     await checkCancelled(renderId, tenantId)
@@ -338,12 +395,13 @@ export async function handleShortsBriefRender(
       metadata: {
         renderId,
         briefId,
-        assemblyVersion: '1B.6',
+        assemblyVersion: '1B.7',
         sourceClipCount: assembly.sourceClipCount,
         targetDurationS: brief.durationSeconds,
         actualDurationS: assembly.actualDurationSeconds,
         hasVO: voScenes.length > 0 && Boolean(brief.voiceCloneId),
         musicTrackSlug: musicLayer?.slug ?? null,
+        captionsEnabled: brief.captionsEnabled,
       },
     })
 
@@ -373,12 +431,13 @@ export async function handleShortsBriefRender(
         assetId: asset.id,
         durationMs,
         r2Key,
-        assemblyVersion: '1B.6',
+        assemblyVersion: '1B.7',
         sourceClipCount: assembly.sourceClipCount,
         actualDurationS: assembly.actualDurationSeconds,
         targetDurationS: brief.durationSeconds,
         hasVO: voScenes.length > 0 && Boolean(brief.voiceCloneId),
         musicTrackSlug: musicLayer?.slug ?? null,
+        captionsEnabled: brief.captionsEnabled,
       },
     })
 

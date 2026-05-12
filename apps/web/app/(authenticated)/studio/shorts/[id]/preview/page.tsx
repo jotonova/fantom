@@ -28,6 +28,7 @@ interface ShortsBrief {
   sourceAssetIds: string[]
   brandKitId: string | null
   voiceCloneId: string | null
+  captionsEnabled: boolean
   status: BriefStatus
   errorMessage: string | null
 }
@@ -284,6 +285,10 @@ export default function PreviewPage() {
             <div>
               <span className="block text-xs text-fantom-text-muted">Music</span>
               <span className="text-fantom-text">{musicTrackName ?? <em className="text-fantom-text-muted">None</em>}</span>
+            </div>
+            <div>
+              <span className="block text-xs text-fantom-text-muted">Captions</span>
+              <span className="text-fantom-text">{brief.captionsEnabled ? 'On' : 'Off'}</span>
             </div>
           </div>
 
