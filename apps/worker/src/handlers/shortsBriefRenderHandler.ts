@@ -3,6 +3,7 @@ import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { createRequire } from 'node:module'
 import type { Job as BullJob } from 'bullmq'
 import type { ShortsRenderPayload } from '@fantom/jobs'
 import { putObjectFromFile, getObjectToFile } from '@fantom/storage'
@@ -13,6 +14,11 @@ import { mixVoiceover } from '../lib/voMix.js'
 import type { VOFileWithOffset } from '../lib/voMix.js'
 import { generateCaptionsForRender } from '../lib/generateCaptions.js'
 import type { CaptionVOSegment } from '../lib/generateCaptions.js'
+
+// Use the ffmpeg-static binary so caption burns get the libass-enabled build,
+// not whatever system ffmpeg happens to be in PATH on the Render host.
+const _require = createRequire(import.meta.url)
+const ffmpegBin: string = (_require('ffmpeg-static') as string | null) ?? 'ffmpeg'
 import {
   getShortsRenderRow,
   patchShortsRender,
@@ -351,24 +357,40 @@ export async function handleShortsBriefRender(
       await writeFile(assPath, assContent, 'utf-8')
 
       const captionedPath = join(workDir, 'output_captioned.mp4')
-      log('burning captions into video…')
-      await execFileAsync(
-        'ffmpeg',
-        ['-i', finalOutputPath, '-vf', `ass=${assPath}`, '-c:a', 'copy', '-y', captionedPath],
-        { timeout: 120_000 },
-      )
-      finalOutputPath = captionedPath
-
       const captionCount = (assContent.match(/^Dialogue:/gm) ?? []).length
-      logEvent({
-        tenantId,
-        kind: 'shorts.render.captions_burned',
-        severity: 'info',
-        subjectType: 'shorts_render',
-        subjectId: renderId,
-        metadata: { briefId, captionCount },
-      })
-      log(`captions burned — ${captionCount} segment(s)`)
+      log(`burning ${captionCount} caption segment(s) via ${ffmpegBin}…`)
+      try {
+        await execFileAsync(
+          ffmpegBin,
+          ['-i', finalOutputPath, '-vf', `ass=${assPath}`, '-c:a', 'copy', '-y', captionedPath],
+          { timeout: 120_000 },
+        )
+        finalOutputPath = captionedPath
+        logEvent({
+          tenantId,
+          kind: 'shorts.render.captions_burned',
+          severity: 'info',
+          subjectType: 'shorts_render',
+          subjectId: renderId,
+          metadata: { briefId, captionCount },
+        })
+        log(`captions burned — ${captionCount} segment(s)`)
+      } catch (captionErr) {
+        // Degrade gracefully: if libass is unavailable the render still ships,
+        // just without captions. A separate error event surfaces the gap.
+        const msg = captionErr instanceof Error ? captionErr.message : String(captionErr)
+        log(`WARNING: caption burn failed (libass may be missing) — continuing without captions: ${msg.slice(0, 200)}`)
+        logEvent({
+          tenantId,
+          kind: 'shorts.render.captions_failed',
+          severity: 'warn',
+          subjectType: 'shorts_render',
+          subjectId: renderId,
+          errorMessage: msg.slice(0, 500),
+          metadata: { briefId, captionCount },
+        })
+        // finalOutputPath unchanged — ships the audio-mixed video without caption overlay
+      }
     }
 
     // ── Upload to R2 ──────────────────────────────────────────────────────────
