@@ -7,7 +7,7 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Spinner } from
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type BriefStatus = 'draft' | 'ready' | 'rendering' | 'rendered' | 'failed'
+type BriefStatus = 'draft' | 'ready' | 'rendering' | 'rendered' | 'failed' | 'cancelled'
 
 interface Scene {
   id: string
@@ -88,6 +88,7 @@ const STATUS_BADGE: Record<
   rendering: { variant: 'warning',  label: 'Rendering' },
   rendered:  { variant: 'success',  label: 'Rendered' },
   failed:    { variant: 'danger',   label: 'Failed' },
+  cancelled: { variant: 'neutral',  label: 'Cancelled' },
 }
 
 // ── Section components ────────────────────────────────────────────────────────
@@ -195,14 +196,34 @@ export default function PreviewPage() {
     setActionError(null)
     setTransitioning(true)
     try {
-      const updated = await apiFetch<ShortsBrief>(`/shorts-briefs/${id}`, {
+      await apiFetch<ShortsBrief>(`/shorts-briefs/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ status: 'draft' }),
       })
-      setData((prev) => prev ? { ...prev, brief: updated } : prev)
+      router.push(`/studio/shorts/${id}/edit`)
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Failed to unlock')
-    } finally {
+      setTransitioning(false)
+    }
+  }
+
+  async function handleUnlockAndEdit() {
+    if (!data) return
+    const label = data.brief.status === 'rendered' ? 'Re-render' : 'edit'
+    const confirmed = window.confirm(
+      `Unlock brief for ${label}? The existing render will stay — you can re-generate after editing.`,
+    )
+    if (!confirmed) return
+    setActionError(null)
+    setTransitioning(true)
+    try {
+      await apiFetch<ShortsBrief>(`/shorts-briefs/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'draft' }),
+      })
+      router.push(`/studio/shorts/${id}/edit`)
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'Failed to unlock brief')
       setTransitioning(false)
     }
   }
@@ -565,6 +586,20 @@ export default function PreviewPage() {
                 onClick={handleUnlock}
               >
                 {transitioning ? 'Unlocking…' : 'Unlock for editing'}
+              </Button>
+            )}
+            {(brief.status === 'rendered' || brief.status === 'failed' || brief.status === 'cancelled') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={transitioning}
+                onClick={handleUnlockAndEdit}
+              >
+                {transitioning
+                  ? 'Unlocking…'
+                  : brief.status === 'rendered'
+                  ? 'Edit & Re-render'
+                  : 'Edit Brief'}
               </Button>
             )}
           </div>
