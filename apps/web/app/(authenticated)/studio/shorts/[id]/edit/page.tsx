@@ -219,7 +219,7 @@ export default function EditShortsBriefPage() {
         setBrandKitId(b.brandKitId ?? '')
         setVoiceCloneId(b.voiceCloneId ?? '')
         setMusicTrackId(b.musicTrackId ?? '')
-        setCaptionsEnabled(b.captionsEnabled)
+        setCaptionsEnabled(b.captionsEnabled ?? true)
       })
       .catch((err) => {
         setLoadError(err instanceof ApiError && err.status === 404 ? 'Brief not found' : 'Failed to load brief')
