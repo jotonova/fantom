@@ -126,7 +126,7 @@ export function buildDrawtextFilter(segments: CaptionSegment[], fontPath: string
         `:bordercolor=black` +
         `:x=(w-text_w)/2` +
         `:y=h-text_h-80` +
-        `:enable='between(t\\,${startS}\\,${endS})'`
+        `:enable='between(t,${startS},${endS})'`
       )
     })
     .join(',')

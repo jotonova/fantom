@@ -385,15 +385,19 @@ export async function handleShortsBriefRender(
           log(`captions burned — ${captionCount} segment(s)`)
         } catch (captionErr) {
           // Degrade gracefully: render still ships without captions if drawtext fails.
-          const msg = captionErr instanceof Error ? captionErr.message : String(captionErr)
-          log(`WARNING: caption burn failed — continuing without captions: ${msg.slice(0, 400)}`)
+          // Use .stderr directly — the full error.message starts with "Command failed: <cmd>"
+          // which is thousands of chars long, pushing the actual ffmpeg error off the end.
+          const errObj = captionErr as NodeJS.ErrnoException & { stderr?: string; stdout?: string }
+          const stderr = errObj.stderr ?? ''
+          const diagMsg = stderr.trim() || (captionErr instanceof Error ? captionErr.message.slice(0, 500) : String(captionErr))
+          log(`WARNING: caption burn failed — continuing without captions:\n${diagMsg.slice(0, 400)}`)
           logEvent({
             tenantId,
             kind: 'shorts.render.captions_failed',
             severity: 'warn',
             subjectType: 'shorts_render',
             subjectId: renderId,
-            errorMessage: msg.slice(0, 2000),
+            errorMessage: diagMsg.slice(0, 2000),
             metadata: { briefId, captionCount },
           })
           // finalOutputPath unchanged — ships the audio-mixed video without caption overlay
