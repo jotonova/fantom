@@ -58,6 +58,9 @@ export interface AssemblyResult {
   clipStartTimes: number[]
   /** Planned playout duration of each clip (seconds, after pacing trim). */
   clipDurations: number[]
+  /** Where in the source asset each clip was trimmed from (seconds). Used to align
+   *  transcript word timestamps (which are source-relative) to the assembled timeline. */
+  clipTrimStartTimes: number[]
 }
 
 // ── Clip plan ─────────────────────────────────────────────────────────────────
@@ -339,6 +342,9 @@ export async function assembleShortFromBrief(
     cumulative += d
     return start
   })
+  // Trim start of each clip within its source asset (seconds).
+  // Required to align source-relative transcript word timestamps to the video timeline.
+  const clipTrimStartTimes = plan.map((p) => p.startOffset)
 
   log(
     `plan: ${plan.length} clip(s), target=${brief.durationSeconds}s, ` +
@@ -407,5 +413,6 @@ export async function assembleShortFromBrief(
     ffmpegLog: ffmpegLog.slice(-4096),
     clipStartTimes,
     clipDurations,
+    clipTrimStartTimes,
   }
 }

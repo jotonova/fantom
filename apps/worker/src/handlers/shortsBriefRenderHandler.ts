@@ -339,9 +339,13 @@ export async function handleShortsBriefRender(
       await checkCancelled(renderId, tenantId)
       log('generating captions…')
 
-      // Build per-clip caption inputs (transcript words shifted to video timeline)
+      // Build per-clip caption inputs.
+      // clipTrimStartMs: where in the source asset the clip was trimmed from (converts
+      //   source-relative AssemblyAI timestamps to clip-local times).
+      // clipStartMsInVideo: where the clip starts in the assembled video.
       const captionClips = clips.map((clip, i) => ({
         transcriptWords: clip.transcriptWordTimestamps,
+        clipTrimStartMs: (assembly.clipTrimStartTimes[i] ?? 0) * 1000,
         clipStartMsInVideo: (assembly.clipStartTimes[i] ?? 0) * 1000,
       }))
 

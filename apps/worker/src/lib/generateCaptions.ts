@@ -16,8 +16,11 @@ import type { TranscriptWord } from './snapCuts.js'
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export interface CaptionClip {
-  /** Word timestamps from AssemblyAI, ms relative to clip start. Null = no transcript. */
+  /** Word timestamps from AssemblyAI, ms relative to the SOURCE ASSET origin. Null = no transcript. */
   transcriptWords: TranscriptWord[] | null
+  /** Where in the source asset the clip was trimmed from (ms). Subtracted from word timestamps
+   *  to convert source-relative times to clip-local times before adding clipStartMsInVideo. */
+  clipTrimStartMs: number
   /** Where this clip begins in the assembled video (ms). */
   clipStartMsInVideo: number
 }
@@ -115,8 +118,8 @@ export function buildAssContent(segments: CaptionSegment[], fontName = 'Noto San
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     // ABGR: white=&H00FFFFFF, black outline=&H00000000, semi-transparent back=&H80000000
     // Bold=0 (regular weight — use bundled NotoSans-Regular), Alignment=2 (bottom-centre),
-    // Outline=3px, MarginV=80px from bottom
-    `Style: Default,${fontName},52,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,3,0,2,10,10,80,1`,
+    // Fontsize=110px (legible on phone at 1080×1920), Outline=6px, MarginV=120px from bottom
+    `Style: Default,${fontName},110,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,6,0,2,10,10,120,1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -184,15 +187,22 @@ export async function generateCaptionsForRender(opts: {
 }): Promise<CaptionSegment[]> {
   const { clips, voSegments, log } = opts
 
-  // Step 1 — source words shifted to video timeline
+  // Step 1 — source words shifted to video timeline.
+  // tw.start/end are ms relative to the SOURCE ASSET origin (AssemblyAI timestamps).
+  // Correct formula: (source_ms - trim_start_ms) + assembled_clip_start_ms
+  // Also drop words that lie entirely outside the trimmed window.
   const sourceWords: Word[] = []
   for (const clip of clips) {
     if (!clip.transcriptWords || clip.transcriptWords.length === 0) continue
     for (const tw of clip.transcriptWords) {
+      const localStart = tw.start - clip.clipTrimStartMs
+      const localEnd = tw.end - clip.clipTrimStartMs
+      // Skip words that fall outside the clip's trimmed window
+      if (localEnd <= 0) continue
       sourceWords.push({
         text: tw.text,
-        start: tw.start + clip.clipStartMsInVideo,
-        end: tw.end + clip.clipStartMsInVideo,
+        start: Math.max(0, localStart) + clip.clipStartMsInVideo,
+        end: localEnd + clip.clipStartMsInVideo,
       })
     }
   }
