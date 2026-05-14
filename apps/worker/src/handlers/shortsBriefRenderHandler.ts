@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, rm, stat } from 'node:fs/promises'
+import { access, mkdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -362,9 +362,23 @@ export async function handleShortsBriefRender(
       if (captionCount === 0) {
         log('captions: no segments — skipping burn pass')
       } else {
-        // Use drawtext filter (libfreetype only — no libass/fontconfig dependency).
-        // DejaVuSans-Bold is guaranteed present on Ubuntu 22.04 (Render's base image).
-        const fontPath = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+        // Probe candidate font paths — DejaVu is standard on Ubuntu 22.04 but not every
+        // minimal container image includes it. Log which paths exist for diagnosis.
+        const fontCandidates = [
+          '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+          '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+          '/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf',
+          '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
+          '/usr/share/fonts/TTF/DejaVuSans-Bold.ttf',
+          '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
+        ]
+        const fontProbe = await Promise.all(
+          fontCandidates.map((p) => access(p).then(() => p).catch(() => null))
+        )
+        const availableFonts = fontProbe.filter(Boolean)
+        log(`font probe: ${availableFonts.length > 0 ? availableFonts.join(', ') : 'NONE FOUND'}`)
+
+        const fontPath = availableFonts[0] ?? fontCandidates[0]!
         const vfFilter = buildDrawtextFilter(captionSegments, fontPath)
         log(`burning ${captionCount} caption segment(s) via drawtext…`)
         try {
@@ -388,16 +402,18 @@ export async function handleShortsBriefRender(
           // Use .stderr directly — the full error.message starts with "Command failed: <cmd>"
           // which is thousands of chars long, pushing the actual ffmpeg error off the end.
           const errObj = captionErr as NodeJS.ErrnoException & { stderr?: string; stdout?: string }
-          const stderr = errObj.stderr ?? ''
-          const diagMsg = stderr.trim() || (captionErr instanceof Error ? captionErr.message.slice(0, 500) : String(captionErr))
-          log(`WARNING: caption burn failed — continuing without captions:\n${diagMsg.slice(0, 400)}`)
+          const stderr = errObj.stderr?.trim() ?? ''
+          // Capture the TAIL of stderr — ffmpeg's version+config header consumes ~1500 chars
+          // at the start; the actual error lines are always at the end.
+          const diagMsg = stderr ? stderr.slice(-2000) : (captionErr instanceof Error ? captionErr.message.slice(-500) : String(captionErr))
+          log(`WARNING: caption burn failed — continuing without captions:\n${diagMsg.slice(-400)}`)
           logEvent({
             tenantId,
             kind: 'shorts.render.captions_failed',
             severity: 'warn',
             subjectType: 'shorts_render',
             subjectId: renderId,
-            errorMessage: diagMsg.slice(0, 2000),
+            errorMessage: diagMsg,
             metadata: { briefId, captionCount },
           })
           // finalOutputPath unchanged — ships the audio-mixed video without caption overlay
