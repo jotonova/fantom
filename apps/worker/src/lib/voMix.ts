@@ -165,7 +165,7 @@ export async function mixVoiceover(opts: {
       `[${musicInputIdx}:a]aloop=loop=-1:size=0,atrim=end=${dur},asetpts=PTS-STARTPTS,aformat=channel_layouts=stereo[music_looped]`,
     )
     // Lower music volume, then duck it under VO (gentle sidechain).
-    filterLines.push('[music_looped]volume=0.3[music_vol]')
+    filterLines.push('[music_looped]volume=0.18[music_vol]')
     filterLines.push(
       '[music_vol][vo_music_sc]sidechaincompress=threshold=0.015:ratio=4:attack=10:release=500[music_ducked]',
     )
