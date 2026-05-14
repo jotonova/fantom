@@ -385,7 +385,7 @@ export async function handleShortsBriefRender(
           await execFileAsync(
             ffmpegBin,
             ['-i', finalOutputPath, '-vf', vfFilter, '-c:a', 'copy', '-y', captionedPath],
-            { timeout: 120_000 },
+            { timeout: 600_000 }, // 10 min — re-encoding a 60s video at ~6fps on Render takes ~3 min
           )
           finalOutputPath = captionedPath
           logEvent({
