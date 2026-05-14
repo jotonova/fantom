@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { access, mkdir, rm, stat } from 'node:fs/promises'
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -13,10 +14,15 @@ import { generateVO } from '../lib/generateVO.js'
 import { mixVoiceover } from '../lib/voMix.js'
 import type { VOFileWithOffset } from '../lib/voMix.js'
 import {
-  buildDrawtextFilter,
+  buildAssContent,
   generateCaptionsForRender,
 } from '../lib/generateCaptions.js'
 import type { CaptionVOSegment } from '../lib/generateCaptions.js'
+
+// Bundled font — committed at apps/worker/assets/NotoSans-Regular.ttf.
+// Resolved relative to this compiled file so it works in both dev (src/) and
+// production (dist/). Path from dist/handlers/ → ../../assets/.
+const CAPTION_FONT_DIR = fileURLToPath(new URL('../../assets', import.meta.url))
 
 // Use the ffmpeg-static binary so caption burns get the libass-enabled build,
 // not whatever system ffmpeg happens to be in PATH on the Render host.
@@ -362,25 +368,19 @@ export async function handleShortsBriefRender(
       if (captionCount === 0) {
         log('captions: no segments — skipping burn pass')
       } else {
-        // Probe candidate font paths — DejaVu is standard on Ubuntu 22.04 but not every
-        // minimal container image includes it. Log which paths exist for diagnosis.
-        const fontCandidates = [
-          '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-          '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
-          '/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf',
-          '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
-          '/usr/share/fonts/TTF/DejaVuSans-Bold.ttf',
-          '/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf',
-        ]
-        const fontProbe = await Promise.all(
-          fontCandidates.map((p) => access(p).then(() => p).catch(() => null))
-        )
-        const availableFonts = fontProbe.filter(Boolean)
-        log(`font probe: ${availableFonts.length > 0 ? availableFonts.join(', ') : 'NONE FOUND'}`)
+        // Burn captions via libass ass= filter.
+        // Uses a bundled NotoSans-Regular.ttf (apps/worker/assets/) via fontsdir=
+        // so there is zero dependency on system fonts.
+        const assContent = buildAssContent(captionSegments)
+        const assPath = join(workDir, 'captions.ass')
+        await writeFile(assPath, assContent, 'utf-8')
 
-        const fontPath = availableFonts[0] ?? fontCandidates[0]!
-        const vfFilter = buildDrawtextFilter(captionSegments, fontPath)
-        log(`burning ${captionCount} caption segment(s) via drawtext…`)
+        // fontsdir= tells libass to scan our bundled font directory.
+        // Escape the paths: colons in paths must be \: in filtergraph option values.
+        const escapedAss = assPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:')
+        const escapedFontDir = CAPTION_FONT_DIR.replace(/\\/g, '\\\\').replace(/:/g, '\\:')
+        const vfFilter = `ass=${escapedAss}:fontsdir=${escapedFontDir}`
+        log(`burning ${captionCount} caption segment(s) via ass= (fontsdir=${CAPTION_FONT_DIR})…`)
         try {
           await execFileAsync(
             ffmpegBin,

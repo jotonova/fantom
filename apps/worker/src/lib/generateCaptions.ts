@@ -87,6 +87,48 @@ function distributeWords(tokens: string[], startMs: number, endMs: number): Word
   return words
 }
 
+// ── ASS serialisation ─────────────────────────────────────────────────────────
+
+function fmtAss(ms: number): string {
+  const cs = Math.round(ms / 10)
+  const c = cs % 100
+  const s = Math.floor(cs / 100) % 60
+  const m = Math.floor(cs / 6000) % 60
+  const h = Math.floor(cs / 360000)
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(c).padStart(2, '00')}`
+}
+
+/**
+ * Serialise caption segments into an ASS subtitle file string.
+ * fontName must match the family name of the font in the fontsdir you pass to
+ * the `ass=` filter (e.g. "Noto Sans" for NotoSans-Regular.ttf).
+ */
+export function buildAssContent(segments: CaptionSegment[], fontName = 'Noto Sans'): string {
+  const header = [
+    '[Script Info]',
+    'ScriptType: v4.00+',
+    'PlayResX: 1080',
+    'PlayResY: 1920',
+    'ScaledBorderAndShadow: yes',
+    '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    // ABGR: white=&H00FFFFFF, black outline=&H00000000, semi-transparent back=&H80000000
+    // Bold=0 (regular weight — use bundled NotoSans-Regular), Alignment=2 (bottom-centre),
+    // Outline=3px, MarginV=80px from bottom
+    `Style: Default,${fontName},52,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,3,0,2,10,10,80,1`,
+    '',
+    '[Events]',
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+  ].join('\n')
+
+  const dialogues = segments.map(
+    (seg) => `Dialogue: 0,${fmtAss(seg.startMs)},${fmtAss(seg.endMs)},Default,,0,0,0,,${seg.text}`,
+  )
+
+  return [header, ...dialogues].join('\n')
+}
+
 // ── drawtext helpers ──────────────────────────────────────────────────────────
 
 /**
