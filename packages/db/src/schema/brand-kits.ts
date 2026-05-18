@@ -38,6 +38,9 @@ export const brandKits = pgTable(
     captionPosition: text('caption_position'), // 'top' | 'center' | 'bottom'
     // Music
     musicVibe: text('music_vibe'), // 'upbeat' | 'calm' | 'dramatic' | 'inspirational' | 'none'
+    // Overlay identity (1B.8) — used in intro/outro frames and lower-third label
+    tagline: text('tagline'),     // e.g. "Powered by Keller Williams"
+    agentName: text('agent_name'), // e.g. "Amy Casanova" (distinct from brand name)
     // Audit
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',

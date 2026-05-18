@@ -659,6 +659,22 @@ export default function EditShortsBriefPage() {
             </select>
           </div>
 
+          {/* Brand Overlays summary — shown when a brand kit is selected */}
+          {brandKitId && (
+            <div className="rounded-fantom border border-fantom-steel-border bg-fantom-steel/40 px-4 py-3 text-sm">
+              <p className="mb-2 font-medium text-fantom-text">Brand Overlays</p>
+              <ul className="space-y-1 text-fantom-text-muted">
+                <li>&#10003; Intro frame (1.5 s brand splash)</li>
+                <li>&#10003; Outro frame (2.5 s brand splash + CTA)</li>
+                <li>&#10003; Lower-third (logo + name during scenes)</li>
+                <li>&#10003; Watermark (top-right logo throughout)</li>
+              </ul>
+              <p className="mt-2 text-xs text-fantom-text-muted/70">
+                Overlays are auto-applied from the selected brand kit. Edit brand kit settings to customize.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <Label htmlFor="voice">Voice</Label>
             {voices.length === 0 ? (

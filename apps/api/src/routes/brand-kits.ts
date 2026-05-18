@@ -63,6 +63,8 @@ interface BrandKitBody {
   captionFont?: string | null
   captionPosition?: string | null
   musicVibe?: string | null
+  tagline?: string | null
+  agentName?: string | null
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -138,6 +140,8 @@ const brandKitRoutes: FastifyPluginAsync = async (fastify) => {
             captionFont: rest.captionFont ?? null,
             captionPosition: rest.captionPosition ?? null,
             musicVibe: rest.musicVibe ?? null,
+            tagline: rest.tagline ?? null,
+            agentName: rest.agentName ?? null,
             createdByUserId: userId,
           })
           .returning()
@@ -179,6 +183,8 @@ const brandKitRoutes: FastifyPluginAsync = async (fastify) => {
         'captionFont',
         'captionPosition',
         'musicVibe',
+        'tagline',
+        'agentName',
       ]
       for (const key of nullable) {
         if (key in body) {

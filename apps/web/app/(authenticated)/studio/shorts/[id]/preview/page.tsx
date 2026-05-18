@@ -298,6 +298,16 @@ export default function PreviewPage() {
             <div>
               <span className="block text-xs text-fantom-text-muted">Brand Kit</span>
               <span className="text-fantom-text">{brandKitName ?? <em className="text-fantom-text-muted">None</em>}</span>
+              {brandKitName && (
+                <span className="mt-0.5 block text-xs text-fantom-text-muted/70">
+                  Intro · Outro · Lower-third · Watermark — included
+                </span>
+              )}
+              {!brandKitName && (
+                <span className="mt-0.5 block text-xs text-fantom-text-muted/50 italic">
+                  No brand kit — output will be unbranded
+                </span>
+              )}
             </div>
             <div>
               <span className="block text-xs text-fantom-text-muted">Voice</span>

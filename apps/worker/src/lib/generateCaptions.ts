@@ -105,8 +105,33 @@ function fmtAss(ms: number): string {
  * Serialise caption segments into an ASS subtitle file string.
  * fontName must match the family name of the font in the fontsdir you pass to
  * the `ass=` filter (e.g. "Noto Sans" for NotoSans-Regular.ttf).
+ *
+ * When lowerThird is provided (1B.8 brand overlays), a second "LowerThird" style
+ * is added with a persistent dialogue line spanning the full video. This renders
+ * the agent name inside the semi-transparent bar applied by the brand overlay pass.
+ * MarginL=300 leaves room for the ~80 px logo + gap at x=150.
+ * MarginV=230 aligns text vertically inside the 100 px bar (bar top at H-290).
  */
-export function buildAssContent(segments: CaptionSegment[], fontName = 'Noto Sans'): string {
+export function buildAssContent(
+  segments: CaptionSegment[],
+  fontName = 'Noto Sans',
+  lowerThird?: { agentName: string; videoDurationMs: number },
+): string {
+  const styles: string[] = [
+    // ABGR: white=&H00FFFFFF, black outline=&H00000000, semi-transparent back=&H80000000
+    // Bold=0 (regular weight — use bundled NotoSans-Regular), Alignment=2 (bottom-centre),
+    // Fontsize=110px (legible on phone at 1080×1920), Outline=6px, MarginV=120px from bottom
+    `Style: Default,${fontName},110,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,6,0,2,10,10,120,1`,
+  ]
+
+  if (lowerThird) {
+    // Alignment=1 (bottom-left), MarginL=300 (right of logo), MarginV=230 (vertically inside bar).
+    // No background box — the semi-transparent dark bar is drawn by brandOverlays concatAndOverlay.
+    styles.push(
+      `Style: LowerThird,${fontName},40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2,0,1,300,10,230,1`,
+    )
+  }
+
   const header = [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -116,18 +141,22 @@ export function buildAssContent(segments: CaptionSegment[], fontName = 'Noto San
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    // ABGR: white=&H00FFFFFF, black outline=&H00000000, semi-transparent back=&H80000000
-    // Bold=0 (regular weight — use bundled NotoSans-Regular), Alignment=2 (bottom-centre),
-    // Fontsize=110px (legible on phone at 1080×1920), Outline=6px, MarginV=120px from bottom
-    `Style: Default,${fontName},110,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,6,0,2,10,10,120,1`,
+    ...styles,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ].join('\n')
 
-  const dialogues = segments.map(
+  const dialogues: string[] = segments.map(
     (seg) => `Dialogue: 0,${fmtAss(seg.startMs)},${fmtAss(seg.endMs)},Default,,0,0,0,,${seg.text}`,
   )
+
+  if (lowerThird) {
+    // Single persistent event spanning the entire video (generous upper bound).
+    const endTs = fmtAss(lowerThird.videoDurationMs + 5000)
+    const safeName = lowerThird.agentName.replace(/[{}]/g, '')
+    dialogues.push(`Dialogue: 0,0:0:00.00,${endTs},LowerThird,,0,0,0,,${safeName}`)
+  }
 
   return [header, ...dialogues].join('\n')
 }
