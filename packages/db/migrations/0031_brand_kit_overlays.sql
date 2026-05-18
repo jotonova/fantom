@@ -3,8 +3,8 @@
 -- (intro/outro splash, lower-third label). Both columns are nullable so existing
 -- kits keep working without any value. Seeded for the 4 live kits below.
 
-ALTER TABLE brand_kits ADD COLUMN tagline text;
-ALTER TABLE brand_kits ADD COLUMN agent_name text;
+ALTER TABLE brand_kits ADD COLUMN IF NOT EXISTS tagline text;
+ALTER TABLE brand_kits ADD COLUMN IF NOT EXISTS agent_name text;
 
 -- Seed the 4 existing kits for tenant 8b97e0ad-523b-487f-9c68-b416e070fe04
 UPDATE brand_kits SET tagline = 'Powered by Keller Williams', agent_name = 'KW Brokerage'
