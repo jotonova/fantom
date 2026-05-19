@@ -161,30 +161,33 @@ async function generateSplashFrame(opts: {
 }): Promise<void> {
   const { ffmpegBin, bgColor, logoPath, assPath, fontDir, durationS, outputPath, log } = opts
 
+  // Hard frame count — the most reliable way to cap output duration regardless
+  // of how individual input streams or filters report EOF. 30 fps is the output
+  // frame rate; rounding avoids a fractional frame at the boundary.
+  const frameCount = Math.round(durationS * 30)
+
   const args: string[] = []
 
-  // Input 0: solid colour background
+  // Input 0: solid colour background (infinite lavfi source — duration capped by
+  // -frames:v below, not by the d= parameter).
   args.push(
     '-f', 'lavfi',
-    '-i', `color=c=${bgColor}:s=1080x1920:r=30:d=${durationS}`,
+    '-i', `color=c=${bgColor}:s=1080x1920:r=30`,
   )
 
-  // Input 1 (optional): logo
-  // -loop 1 makes the PNG infinite; bound it at the input level with -t so the
-  // filtergraph sees a finite stream. Combined with -shortest on the output, this
-  // ensures the splash frame always terminates at exactly durationS seconds even
-  // when ffmpeg-static's output -t is unreliable with looped inputs.
+  // Input 1 (optional): logo PNG — read as a single frame (no -loop 1).
+  // The loop filter in filter_complex handles the repeat, giving a finite stream
+  // trimmed to exactly durationS seconds. Avoids the infinite-input issue entirely.
   let logoInputIdx: number | null = null
   if (logoPath) {
     logoInputIdx = 1
-    args.push('-loop', '1', '-t', String(durationS), '-i', logoPath)
+    args.push('-i', logoPath)
   }
 
-  // Input for silence — aevalsrc with explicit duration so ffmpeg has a bounded
-  // source and doesn't require -t to terminate. anullsrc is infinite and has
-  // caused hangs on Render containers where -t wasn't always respected.
+  // Input for silence — use anullsrc with input-level -t (always respected by the
+  // demuxer) rather than relying on filter-parameter duration parsing.
   const silenceIdx = logoPath ? 2 : 1
-  args.push('-f', 'lavfi', '-i', `aevalsrc=0:channel_layout=stereo:sample_rate=44100:duration=${durationS}`)
+  args.push('-f', 'lavfi', '-t', String(durationS), '-i', 'anullsrc=r=44100:cl=stereo')
 
   // Build filter_complex
   const escapedAss = escapeFilterPath(assPath)
@@ -194,7 +197,9 @@ async function generateSplashFrame(opts: {
   let filterComplex: string
   if (logoInputIdx !== null) {
     filterComplex = [
-      `[${logoInputIdx}:v]scale=-1:300[logo_s]`,
+      // Loop the single PNG frame, trim to durationS, reset timestamps — gives a
+      // finite logo stream with no infinite sources in the graph.
+      `[${logoInputIdx}:v]loop=loop=-1:size=1:start=0,trim=duration=${durationS},setpts=PTS-STARTPTS,scale=-1:300[logo_s]`,
       `[0:v][logo_s]overlay=(W-w)/2:280[with_logo]`,
       `[with_logo]${assFilter}[out]`,
     ].join(';')
@@ -206,8 +211,9 @@ async function generateSplashFrame(opts: {
     '-filter_complex', filterComplex,
     '-map', '[out]',
     '-map', `${silenceIdx}:a`,
-    '-t', String(durationS),     // output-level backstop
-    '-shortest',                  // stop at shortest bounded stream (color/aevalsrc at durationS)
+    '-frames:v', String(frameCount), // hard frame cap — primary duration limiter
+    '-t', String(durationS),         // belt-and-suspenders output duration cap
+    '-shortest',                      // stop at shortest stream (audio, now -t bounded)
     '-c:v', 'libx264',
     '-preset', 'fast',
     '-crf', '23',
@@ -220,11 +226,11 @@ async function generateSplashFrame(opts: {
     outputPath,
   )
 
-  log(`  splash: ${durationS}s, bg=${bgColor}, logo=${logoPath ? 'yes' : 'none (text-only)'}`)
+  log(`  splash: ${durationS}s (${frameCount} frames), bg=${bgColor}, logo=${logoPath ? 'yes' : 'none (text-only)'}`)
   try {
     await execFileAsync(ffmpegBin, args, {
-      timeout: 300_000,
-      killSignal: 'SIGKILL', // SIGTERM can be ignored by hung ffmpeg; SIGKILL cannot
+      timeout: 30_000, // 30s is generous for a static 1.5-2.5s frame; was 300s
+      killSignal: 'SIGKILL',
       maxBuffer: 4 * 1024 * 1024,
     })
   } catch (err) {
@@ -250,7 +256,7 @@ async function generateSplashFrame(opts: {
  *   [lsrc]scale=-1:80[ltlogo]       — lower-third logo, 80 px tall
  *   [cv]drawbox=x=140:y=ih-290:w=iw-280:h=100:color=black@0.4:t=fill[barred]
  *   [barred][ltlogo]overlay=150:H-270[ltdone]
- *   [wsrc]scale=-1:60,format=rgba,colorchannelmixer=aa=0.7[wm]
+ *   [wsrc]scale=-1:60[wm]
  *   [ltdone][wm]overlay=W-w-80:80[outv]
  *
  * If no logo is available, watermark and lower-third logo overlays are skipped
@@ -276,7 +282,9 @@ async function concatAndOverlay(opts: {
   let logoInputIdx: number | null = null
   if (logoPath) {
     logoInputIdx = 3
-    args.push('-loop', '1', '-i', logoPath)
+    // Read as a single frame (no -loop 1). The overlay filter's default
+    // eof_action=repeat holds the last logo frame for the full concat duration.
+    args.push('-i', logoPath)
   }
 
   // Build filter
