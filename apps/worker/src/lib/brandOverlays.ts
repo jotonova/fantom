@@ -170,10 +170,14 @@ async function generateSplashFrame(opts: {
   )
 
   // Input 1 (optional): logo
+  // -loop 1 makes the PNG infinite; bound it at the input level with -t so the
+  // filtergraph sees a finite stream. Combined with -shortest on the output, this
+  // ensures the splash frame always terminates at exactly durationS seconds even
+  // when ffmpeg-static's output -t is unreliable with looped inputs.
   let logoInputIdx: number | null = null
   if (logoPath) {
     logoInputIdx = 1
-    args.push('-loop', '1', '-i', logoPath)
+    args.push('-loop', '1', '-t', String(durationS), '-i', logoPath)
   }
 
   // Input for silence — aevalsrc with explicit duration so ffmpeg has a bounded
@@ -202,7 +206,8 @@ async function generateSplashFrame(opts: {
     '-filter_complex', filterComplex,
     '-map', '[out]',
     '-map', `${silenceIdx}:a`,
-    '-t', String(durationS),
+    '-t', String(durationS),     // output-level backstop
+    '-shortest',                  // stop at shortest bounded stream (color/aevalsrc at durationS)
     '-c:v', 'libx264',
     '-preset', 'fast',
     '-crf', '23',
