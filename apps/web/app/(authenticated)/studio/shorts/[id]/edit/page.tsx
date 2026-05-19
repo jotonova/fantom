@@ -198,6 +198,7 @@ export default function EditShortsBriefPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [unlocking, setUnlocking] = useState(false)
 
   useEffect(() => {
     apiFetch<ShortsBrief>(`/shorts-briefs/${id}`)
@@ -330,6 +331,22 @@ export default function EditShortsBriefPage() {
     }
   }
 
+  async function handleUnlock() {
+    setUnlocking(true)
+    setSaveError(null)
+    try {
+      const updated = await apiFetch<ShortsBrief>(`/shorts-briefs/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'draft' }),
+      })
+      setBrief(updated)
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : 'Failed to unlock brief — please try again')
+    } finally {
+      setUnlocking(false)
+    }
+  }
+
   // ── Loading / error states ─────────────────────────────────────────────────
 
   if (!brief && !loadError) {
@@ -350,7 +367,10 @@ export default function EditShortsBriefPage() {
     )
   }
 
-  const isLocked = brief!.status !== 'draft'
+  // Locked only while a render is actively in-flight — edits would race the worker.
+  const isLocked = brief!.status === 'rendering' || brief!.status === 'queued' as string
+  // Any non-draft, non-rendering status can be unlocked back to draft.
+  const isUnlockable = !isLocked && brief!.status !== 'draft'
   const canDelete = brief!.status !== 'rendering'
 
   return (
@@ -371,10 +391,30 @@ export default function EditShortsBriefPage() {
         </Button>
       </div>
 
-      {/* Locked banner */}
+      {/* Render-in-progress banner — hard lock, no escape */}
       {isLocked && (
         <div className="rounded-fantom border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
-          Brief is locked once rendering starts. Fields are read-only.
+          Render in progress — cancel from the render page to edit.
+        </div>
+      )}
+
+      {/* Unlockable banner — rendered / ready / failed → offer one-click unlock */}
+      {isUnlockable && (
+        <div className="flex items-center justify-between gap-4 rounded-fantom border border-fantom-blue/30 bg-fantom-blue/10 px-4 py-3 text-sm text-fantom-blue">
+          <span>
+            {brief!.status === 'rendered' && 'This brief has been rendered. Unlock to make changes and re-render.'}
+            {brief!.status === 'ready' && 'This brief is marked ready. Unlock to make changes before rendering.'}
+            {brief!.status === 'failed' && 'This brief failed to render. Unlock to fix issues and retry.'}
+            {brief!.status !== 'rendered' && brief!.status !== 'ready' && brief!.status !== 'failed' && 'This brief is not in draft mode.'}
+          </span>
+          <button
+            type="button"
+            onClick={handleUnlock}
+            disabled={unlocking}
+            className="flex-shrink-0 rounded-fantom border border-fantom-blue/50 px-3 py-1.5 text-xs font-medium text-fantom-blue hover:bg-fantom-blue/20 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+          >
+            {unlocking ? 'Unlocking…' : 'Unlock for editing'}
+          </button>
         </div>
       )}
 
