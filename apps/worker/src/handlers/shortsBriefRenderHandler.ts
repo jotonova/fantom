@@ -246,9 +246,25 @@ export async function handleShortsBriefRender(
           })
           log(`brand overlays applied — intro=${introDurationMs}ms outro=${outroDurationMs}ms`)
         } catch (overlayErr) {
-          // Fail soft — render continues without brand overlays
-          const msg = overlayErr instanceof Error ? overlayErr.message : String(overlayErr)
-          log(`WARNING: brand overlay pass failed — rendering without overlays:\n${msg.slice(-400)}`)
+          // Fail soft — render continues without brand overlays.
+          // Extract ffmpeg's actual stderr (hidden inside execFile error.message)
+          // so we can see what filter/option failed.
+          const stderr = (overlayErr as { stderr?: string }).stderr?.slice(-2000) ?? ''
+          const msg = overlayErr instanceof Error ? overlayErr.message.slice(-400) : String(overlayErr)
+          const detail = stderr || msg
+          log(`WARNING: brand overlay pass failed — rendering without overlays:\n${detail}`)
+          logEvent({
+            tenantId,
+            kind: 'shorts.render.brand_failed',
+            severity: 'warning',
+            subjectType: 'shorts_render',
+            subjectId: renderId,
+            metadata: {
+              briefId,
+              brandKitId: brandKit.id,
+              error: detail.slice(0, 1000),
+            },
+          })
           finalOutputPath = assembly.outputPath
           introDurationMs = 0
           outroDurationMs = 0

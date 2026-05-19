@@ -214,7 +214,13 @@ async function generateSplashFrame(opts: {
   )
 
   log(`  splash: ${durationS}s, bg=${bgColor}, logo=${logoPath ? 'yes' : 'none (text-only)'}`)
-  await execFileAsync(ffmpegBin, args, { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 })
+  try {
+    await execFileAsync(ffmpegBin, args, { timeout: 300_000, maxBuffer: 4 * 1024 * 1024 })
+  } catch (err) {
+    const stderr = (err as { stderr?: string }).stderr?.slice(-2000) ?? ''
+    log(`  splash ffmpeg FAILED:\n${stderr || String(err)}`)
+    throw err
+  }
 }
 
 /**
@@ -272,7 +278,7 @@ async function concatAndOverlay(opts: {
       `[lsrc]scale=-1:80[ltlogo]`,
       `[cv]drawbox=x=140:y=H-290:w=iw-280:h=100:color=black@0.4:t=fill[barred]`,
       `[barred][ltlogo]overlay=150:H-270[ltdone]`,
-      `[wsrc]scale=-1:60,format=rgba,colorchannelmixer=aa=0.7[wm]`,
+      `[wsrc]scale=-1:60[wm]`,
       `[ltdone][wm]overlay=W-w-80:80[outv]`,
     ].join(';')
   } else {
@@ -297,7 +303,13 @@ async function concatAndOverlay(opts: {
   )
 
   log(`  concat+overlay: intro(${INTRO_DURATION_S}s) + scenes + outro(${OUTRO_DURATION_S}s)`)
-  await execFileAsync(ffmpegBin, args, { timeout: 600_000, maxBuffer: 10 * 1024 * 1024 })
+  try {
+    await execFileAsync(ffmpegBin, args, { timeout: 600_000, maxBuffer: 10 * 1024 * 1024 })
+  } catch (err) {
+    const stderr = (err as { stderr?: string }).stderr?.slice(-2000) ?? ''
+    log(`  concat ffmpeg FAILED:\n${stderr || String(err)}`)
+    throw err
+  }
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -334,10 +346,11 @@ export async function applyBrandOverlays(opts: {
 }): Promise<BrandOverlayResult> {
   const { scenesPath, brandKit, logoR2Key, ctaText, workDir, fontDir, ffmpegBin, log } = opts
 
-  log(`brand overlays: kit="${brandKit.name}" id=${brandKit.id}`)
+  log(`[brandOverlays] START kit="${brandKit.name}" id=${brandKit.id}`)
 
   const overlayDir = join(workDir, 'brand')
   await mkdir(overlayDir, { recursive: true })
+  log(`[brandOverlays] workdir ready: ${overlayDir}`)
 
   // ── Download logo ────────────────────────────────────────────────────────────
 
@@ -368,6 +381,7 @@ export async function applyBrandOverlays(opts: {
 
   // ── Generate intro frame ─────────────────────────────────────────────────────
 
+  log(`[brandOverlays] generating intro frame (${INTRO_DURATION_S}s)…`)
   const introAssPath = join(overlayDir, 'intro.ass')
   await writeFile(
     introAssPath,
@@ -390,6 +404,7 @@ export async function applyBrandOverlays(opts: {
 
   // ── Generate outro frame ─────────────────────────────────────────────────────
 
+  log(`[brandOverlays] generating outro frame (${OUTRO_DURATION_S}s)…`)
   const outroAssPath = join(overlayDir, 'outro.ass')
   await writeFile(
     outroAssPath,
@@ -412,6 +427,7 @@ export async function applyBrandOverlays(opts: {
 
   // ── Concat intro + scenes + outro, apply watermark + lower-third ─────────────
 
+  log(`[brandOverlays] concat+overlay pass…`)
   const brandedPath = join(workDir, 'branded.mp4')
   await concatAndOverlay({
     ffmpegBin,
