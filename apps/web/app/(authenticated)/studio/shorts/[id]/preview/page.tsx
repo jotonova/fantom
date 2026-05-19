@@ -300,7 +300,7 @@ export default function PreviewPage() {
               <span className="text-fantom-text">{brandKitName ?? <em className="text-fantom-text-muted">None</em>}</span>
               {brandKitName && (
                 <span className="mt-0.5 block text-xs text-fantom-text-muted/70">
-                  Intro · Outro · Lower-third · Watermark — included
+                  Brand watermark — included
                 </span>
               )}
               {!brandKitName && (

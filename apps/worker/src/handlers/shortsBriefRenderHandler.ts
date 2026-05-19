@@ -192,21 +192,16 @@ export async function handleShortsBriefRender(
       () => checkCancelled(renderId, tenantId),
     )
 
-    // ── Brand overlays (1B.8) ────────────────────────────────────────────────────
-    // If brief.brandKitId is set, applies brand overlays to the assembled video:
-    //   • Intro frame (1.5 s brand splash) prepended before scene 1
-    //   • Outro frame (2.5 s brand splash) appended after the last scene
-    //   • Watermark (top-right logo, 70 % opacity) throughout
-    //   • Lower-third dark bar + logo (bottom-left) throughout
-    // The intro/outro shift is returned as introDurationMs so downstream steps
-    // (VO offsets, caption timings) can adjust accordingly.
+    // ── Brand watermark (1B.8) ───────────────────────────────────────────────────
+    // If brief.brandKitId is set and the kit has a logo, overlays a persistent
+    // watermark (top-right, 90 px tall) on the assembled video.
+    // No intro/outro splashes, no lower-third. Watermark only.
+    // introDurationMs is always 0 — no timing shifts for VO, captions, or music.
 
     const tenantSlug = await getTenantSlug(tenantId)
 
     let finalOutputPath = assembly.outputPath
-    let introDurationMs = 0
-    let outroDurationMs = 0
-    let brandOverlayAgentName: string | null = null
+    const introDurationMs = 0  // watermark-only: no intro added, no timing shift needed
 
     if (brief.brandKitId) {
       await checkCancelled(renderId, tenantId)
@@ -216,7 +211,7 @@ export async function handleShortsBriefRender(
       try {
         brandKit = await getBrandKitRow(brief.brandKitId, tenantId)
       } catch (bkErr) {
-        log(`WARNING: brand kit fetch failed — rendering without overlays: ${bkErr instanceof Error ? bkErr.message : String(bkErr)}`)
+        log(`WARNING: brand kit fetch failed — rendering without watermark: ${bkErr instanceof Error ? bkErr.message : String(bkErr)}`)
       }
 
       if (brandKit) {
@@ -227,28 +222,22 @@ export async function handleShortsBriefRender(
             const logoAsset = await getAssetRow(brandKit.logoAssetId, tenantId)
             logoR2Key = logoAsset?.r2Key ?? null
           } catch {
-            log(`WARNING: logo asset fetch failed — text-only overlays`)
+            log(`WARNING: logo asset fetch failed — skipping watermark`)
           }
         }
-
-        // CTA for outro: use brief.closing if present, else brand tagline
-        const ctaText = (brief as Record<string, unknown>)['closing'] as string | null
 
         try {
           const overlayResult = await applyBrandOverlays({
             scenesPath: assembly.outputPath,
             brandKit,
             logoR2Key,
-            ctaText: ctaText ?? null,
+            ctaText: null,
             workDir,
             fontDir: CAPTION_FONT_DIR,
             ffmpegBin,
             log,
           })
           finalOutputPath = overlayResult.outputPath
-          introDurationMs = overlayResult.introDurationMs
-          outroDurationMs = overlayResult.outroDurationMs
-          brandOverlayAgentName = overlayResult.agentName
 
           logEvent({
             tenantId,
@@ -260,21 +249,16 @@ export async function handleShortsBriefRender(
               briefId,
               brandKitId: brandKit.id,
               brandKitName: brandKit.name,
-              hasIntro: true,
-              hasOutro: true,
               hasWatermark: overlayResult.hadLogo,
-              hasLowerThird: true,
             },
           })
-          log(`brand overlays applied — intro=${introDurationMs}ms outro=${outroDurationMs}ms`)
+          log(`brand watermark applied — hadLogo=${overlayResult.hadLogo}`)
         } catch (overlayErr) {
-          // Fail soft — render continues without brand overlays.
-          // Extract ffmpeg's actual stderr (hidden inside execFile error.message)
-          // so we can see what filter/option failed.
+          // Fail soft — render continues without watermark.
           const stderr = (overlayErr as { stderr?: string }).stderr?.slice(-2000) ?? ''
           const msg = overlayErr instanceof Error ? overlayErr.message.slice(-400) : String(overlayErr)
           const detail = stderr || msg
-          log(`WARNING: brand overlay pass failed — rendering without overlays:\n${detail}`)
+          log(`WARNING: brand watermark pass failed — rendering without watermark:\n${detail}`)
           logEvent({
             tenantId,
             kind: 'shorts.render.brand_failed',
@@ -288,11 +272,9 @@ export async function handleShortsBriefRender(
             },
           })
           finalOutputPath = assembly.outputPath
-          introDurationMs = 0
-          outroDurationMs = 0
         }
       } else {
-        log(`WARNING: brand kit ${brief.brandKitId} not found — rendering without overlays`)
+        log(`WARNING: brand kit ${brief.brandKitId} not found — rendering without watermark`)
       }
     }
 
@@ -300,15 +282,11 @@ export async function handleShortsBriefRender(
     // Only runs when a voice is selected AND at least one scene has a VO script.
     //
     // Offset model (1B.6.1 scope — 1 brief scene = 1 source clip, sequential):
-    //   Opening VO      → offset introDurationMs  (plays at start of brand intro)
-    //   Scene[i] VO     → offset = introDurationMs + clipStartTimes[i]
-    //                     If opening VO also exists, scene[0] is further offset by
-    //                     opening_duration so it sequences inside clip 1.
-    //                     Scenes with index ≥ clip count are skipped (logged).
-    //   Closing VO      → offset = (actualScenesMs + introDurationMs) - closing_duration
-    //                     Floored at last clip's start + introDurationMs.
-    // introDurationMs is 0 when no brand kit is selected, so the math below is
-    // identical to the pre-1B.8 behaviour in that case.
+    //   Opening VO  → offset 0 (start of video)
+    //   Scene[i] VO → offset = clipStartTimes[i] (seconds into assembled video)
+    //                 If opening VO exists, scene[0] is further offset by opening_duration.
+    //   Closing VO  → offset = actualDurationSeconds - closing_duration
+    //                 Floored at last clip's start.
 
     const scenes = Array.isArray(brief.mainScenes)
       ? (brief.mainScenes as Array<{ id: string; description: string; voiceover_script?: string }>)
@@ -416,27 +394,13 @@ export async function handleShortsBriefRender(
           sceneVoIdx++
         }
 
-        // ── Brand intro shift ────────────────────────────────────────────────
-        // All raw offsets above are scene-relative (t=0 = start of scenes.mp4).
-        // Shift every offset by introDurationMs so they land at the right position
-        // in the branded video (intro + scenes + outro).
-        if (introDurationMs > 0) {
-          voFilesWithOffsets = voFilesWithOffsets.map((vf) => ({
-            ...vf,
-            startOffsetMs: vf.startOffsetMs + introDurationMs,
-          }))
-          log(`  VO offsets shifted by +${introDurationMs}ms for brand intro`)
-        }
       }
     }
 
     // ── Music track fetch ─────────────────────────────────────────────────────
     // Music is independent of VO — a brief may have music but no voice, or both.
-    // When brand overlays are applied, videoDurationSeconds is extended to cover
-    // intro + scenes + outro so the music loop/trim covers the full branded video.
 
-    const brandedTotalSeconds =
-      assembly.actualDurationSeconds + introDurationMs / 1000 + outroDurationMs / 1000
+    const brandedTotalSeconds = assembly.actualDurationSeconds
 
     let musicLayer: { localPath: string; slug: string; videoDurationSeconds: number } | undefined
     if (brief.musicTrackId) {
@@ -489,12 +453,10 @@ export async function handleShortsBriefRender(
       // clipTrimStartMs: where in the source asset the clip was trimmed from (converts
       //   source-relative AssemblyAI timestamps to clip-local times).
       // clipStartMsInVideo: where the clip starts in the assembled video.
-      //   When brand overlays are active (introDurationMs > 0), all clip start
-      //   times are shifted forward by introDurationMs to account for the intro frame.
       const captionClips = clips.map((clip, i) => ({
         transcriptWords: clip.transcriptWordTimestamps,
         clipTrimStartMs: (assembly.clipTrimStartTimes[i] ?? 0) * 1000,
-        clipStartMsInVideo: (assembly.clipStartTimes[i] ?? 0) * 1000 + introDurationMs,
+        clipStartMsInVideo: (assembly.clipStartTimes[i] ?? 0) * 1000,
       }))
 
       // Build VO segments (probe each VO file for its duration)
@@ -523,14 +485,7 @@ export async function handleShortsBriefRender(
         // Burn captions via libass ass= filter.
         // Uses a bundled NotoSans-Regular.ttf (apps/worker/assets/) via fontsdir=
         // so there is zero dependency on system fonts.
-        // When brand overlays are active, include a LowerThird ASS style with the
-        // agent name — persistent from t=0 to video end, positioned inside the
-        // semi-transparent dark bar drawn by the brand overlay pass.
-        const totalBrandedMs = brandedTotalSeconds * 1000
-        const lowerThird = brandOverlayAgentName
-          ? { agentName: brandOverlayAgentName, videoDurationMs: totalBrandedMs }
-          : undefined
-        const assContent = buildAssContent(captionSegments, 'Noto Sans', lowerThird)
+        const assContent = buildAssContent(captionSegments, 'Noto Sans', undefined)
         const assPath = join(workDir, 'captions.ass')
         await writeFile(assPath, assContent, 'utf-8')
 
@@ -616,7 +571,7 @@ export async function handleShortsBriefRender(
         musicTrackSlug: musicLayer?.slug ?? null,
         captionsEnabled: brief.captionsEnabled,
         brandKitId: brief.brandKitId ?? null,
-        hasBrandOverlays: introDurationMs > 0,
+        hasBrandOverlays: finalOutputPath !== assembly.outputPath,
       },
     })
 
@@ -654,11 +609,11 @@ export async function handleShortsBriefRender(
         musicTrackSlug: musicLayer?.slug ?? null,
         captionsEnabled: brief.captionsEnabled,
         brandKitId: brief.brandKitId ?? null,
-        hasBrandOverlays: introDurationMs > 0,
+        hasBrandOverlays: finalOutputPath !== assembly.outputPath,
       },
     })
 
-    log(`completed in ${durationMs}ms — ${brandedTotalSeconds.toFixed(2)}s video (scenes=${assembly.actualDurationSeconds.toFixed(2)}s intro=${(introDurationMs/1000).toFixed(1)}s outro=${(outroDurationMs/1000).toFixed(1)}s)`)
+    log(`completed in ${durationMs}ms — ${brandedTotalSeconds.toFixed(2)}s video (hasWatermark=${finalOutputPath !== assembly.outputPath})`)
 
       })(), // end of work IIFE
       _masterTimeoutPromise,
