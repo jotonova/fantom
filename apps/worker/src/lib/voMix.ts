@@ -207,6 +207,7 @@ export async function mixVoiceover(opts: {
   try {
     const { stderr } = await execFileAsync('ffmpeg', args, {
       timeout: MIX_TIMEOUT_MS,
+      killSignal: 'SIGKILL', // SIGTERM can be ignored by hung ffmpeg; SIGKILL cannot
       maxBuffer: 10 * 1024 * 1024,
     })
     log(`mix complete (${(stderr ?? '').split('\n').pop()?.trim() ?? ''})`)

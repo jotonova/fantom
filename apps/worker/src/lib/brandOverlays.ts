@@ -176,9 +176,11 @@ async function generateSplashFrame(opts: {
     args.push('-loop', '1', '-i', logoPath)
   }
 
-  // Input for silence (index depends on whether logo is present)
+  // Input for silence — aevalsrc with explicit duration so ffmpeg has a bounded
+  // source and doesn't require -t to terminate. anullsrc is infinite and has
+  // caused hangs on Render containers where -t wasn't always respected.
   const silenceIdx = logoPath ? 2 : 1
-  args.push('-f', 'lavfi', '-i', `anullsrc=r=44100:cl=stereo`)
+  args.push('-f', 'lavfi', '-i', `aevalsrc=0:channel_layout=stereo:sample_rate=44100:duration=${durationS}`)
 
   // Build filter_complex
   const escapedAss = escapeFilterPath(assPath)
@@ -215,7 +217,11 @@ async function generateSplashFrame(opts: {
 
   log(`  splash: ${durationS}s, bg=${bgColor}, logo=${logoPath ? 'yes' : 'none (text-only)'}`)
   try {
-    await execFileAsync(ffmpegBin, args, { timeout: 300_000, maxBuffer: 4 * 1024 * 1024 })
+    await execFileAsync(ffmpegBin, args, {
+      timeout: 300_000,
+      killSignal: 'SIGKILL', // SIGTERM can be ignored by hung ffmpeg; SIGKILL cannot
+      maxBuffer: 4 * 1024 * 1024,
+    })
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr?.slice(-2000) ?? ''
     log(`  splash ffmpeg FAILED:\n${stderr || String(err)}`)
@@ -304,7 +310,11 @@ async function concatAndOverlay(opts: {
 
   log(`  concat+overlay: intro(${INTRO_DURATION_S}s) + scenes + outro(${OUTRO_DURATION_S}s)`)
   try {
-    await execFileAsync(ffmpegBin, args, { timeout: 600_000, maxBuffer: 10 * 1024 * 1024 })
+    await execFileAsync(ffmpegBin, args, {
+      timeout: 600_000,
+      killSignal: 'SIGKILL',
+      maxBuffer: 10 * 1024 * 1024,
+    })
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr?.slice(-2000) ?? ''
     log(`  concat ffmpeg FAILED:\n${stderr || String(err)}`)

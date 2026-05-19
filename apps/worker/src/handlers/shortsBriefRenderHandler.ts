@@ -53,7 +53,7 @@ async function probeAudioMs(filePath: string): Promise<number> {
     const { stdout } = await execFileAsync(
       'ffprobe',
       ['-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath],
-      { timeout: 10_000 },
+      { timeout: 10_000, killSignal: 'SIGKILL' },
     )
     return Math.round(parseFloat(stdout.trim()) * 1000) || 0
   } catch {
@@ -93,6 +93,13 @@ async function uploadWithRetry(
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
+// Master render timeout — final safety net if any individual ffmpeg or network
+// step hangs beyond its own timeout. Pipeline worst-case on Render Standard:
+//   assembly(5min) + brand(10min) + vo(2min) + mix(5min) + captions(10min) = 32min.
+// 20 minutes is generous but still finite; raises a clean error that the catch
+// block can surface to the DB so Justin can see what happened.
+const MASTER_TIMEOUT_MS = 20 * 60_000
+
 export async function handleShortsBriefRender(
   bullJob: BullJob<ShortsRenderPayload>,
 ): Promise<void> {
@@ -122,7 +129,22 @@ export async function handleShortsBriefRender(
     metadata: { briefId, bullmqJobId: bullJob.id },
   })
 
+  // Race the entire pipeline against a master timeout. This catches any step
+  // that hangs beyond its own timeout (e.g. ffmpeg in uninterruptible D-state
+  // after SIGTERM was sent but before SIGKILL took effect, or a future code path
+  // added without an explicit timeout).
+  let _masterTimeoutId: ReturnType<typeof setTimeout> | undefined
+  const _masterTimeoutPromise = new Promise<never>((_, reject) => {
+    _masterTimeoutId = setTimeout(
+      () => reject(new Error(`Render master timeout: pipeline exceeded ${MASTER_TIMEOUT_MS / 60_000} minutes — check worker logs for the hung step`)),
+      MASTER_TIMEOUT_MS,
+    )
+  })
+
   try {
+    await Promise.race([
+      (async () => {
+
     // ── Fetch brief ───────────────────────────────────────────────────────────
 
     const brief = await getShortsBriefRow(briefId, tenantId)
@@ -522,7 +544,10 @@ export async function handleShortsBriefRender(
           await execFileAsync(
             ffmpegBin,
             ['-i', finalOutputPath, '-vf', vfFilter, '-c:a', 'copy', '-y', captionedPath],
-            { timeout: 600_000 }, // 10 min — re-encoding a 60s video at ~6fps on Render takes ~3 min
+            {
+              timeout: 600_000, // 10 min — re-encoding a 60s video at ~6fps on Render takes ~3 min
+              killSignal: 'SIGKILL', // SIGTERM can be ignored by hung ffmpeg; SIGKILL cannot
+            },
           )
           finalOutputPath = captionedPath
           logEvent({
@@ -634,6 +659,10 @@ export async function handleShortsBriefRender(
     })
 
     log(`completed in ${durationMs}ms — ${brandedTotalSeconds.toFixed(2)}s video (scenes=${assembly.actualDurationSeconds.toFixed(2)}s intro=${(introDurationMs/1000).toFixed(1)}s outro=${(outroDurationMs/1000).toFixed(1)}s)`)
+
+      })(), // end of work IIFE
+      _masterTimeoutPromise,
+    ])
   } catch (err) {
     // ── Cancellation — not an error; do not rethrow ───────────────────────────
     if (err instanceof ShortsBriefRenderCancelledError) {
@@ -687,6 +716,7 @@ export async function handleShortsBriefRender(
     console.error(`[shorts-render:${renderId}] failed:`, err)
     throw err
   } finally {
+    clearTimeout(_masterTimeoutId)
     // Always clean up the work directory — success, failure, or cancellation
     await rm(workDir, { recursive: true, force: true }).catch(() => {})
   }

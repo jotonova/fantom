@@ -367,6 +367,7 @@ export async function assembleShortFromBrief(
   try {
     const { stderr } = await execFileAsync('ffmpeg', ffmpegArgs, {
       timeout: RENDER_TIMEOUT_MS,
+      killSignal: 'SIGKILL', // SIGTERM can be ignored by hung ffmpeg; SIGKILL cannot
       maxBuffer: 10 * 1024 * 1024,
     })
     ffmpegLog = stderr ?? ''
@@ -374,7 +375,7 @@ export async function assembleShortFromBrief(
     const e = err as NodeJS.ErrnoException & { stderr?: string; killed?: boolean; signal?: string }
     const stderrTail = (e.stderr ?? '').slice(-2048)
 
-    if (e.killed || e.signal === 'SIGTERM' || String(e.code) === 'ETIMEDOUT') {
+    if (e.killed || e.signal === 'SIGTERM' || e.signal === 'SIGKILL' || String(e.code) === 'ETIMEDOUT') {
       throw new Error(`ffmpeg timed out after ${RENDER_TIMEOUT_MS / 1000}s`)
     }
     if (e.message?.includes('ENOSPC') || stderrTail.includes('No space left')) {
