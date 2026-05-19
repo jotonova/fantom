@@ -189,7 +189,7 @@ async function generateSplashFrame(opts: {
   if (logoInputIdx !== null) {
     filterComplex = [
       `[${logoInputIdx}:v]scale=-1:300[logo_s]`,
-      `[0:v][logo_s]overlay=(W-w)/2:280[with_logo]`,
+      `[0:v][logo_s]overlay=(iw-w)/2:280[with_logo]`,
       `[with_logo]${assFilter}[out]`,
     ].join(';')
   } else {
@@ -237,10 +237,10 @@ async function generateSplashFrame(opts: {
  *   [0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[cv][ca]
  *   [3:v]split[lsrc][wsrc]
  *   [lsrc]scale=-1:80[ltlogo]       — lower-third logo, 80 px tall
- *   [cv]drawbox=x=140:y=H-290:w=iw-280:h=100:color=black@0.4:t=fill[barred]
- *   [barred][ltlogo]overlay=150:H-270[ltdone]
+ *   [cv]drawbox=x=140:y=ih-290:w=iw-280:h=100:color=black@0.4:t=fill[barred]
+ *   [barred][ltlogo]overlay=150:ih-270[ltdone]
  *   [wsrc]scale=-1:60,format=rgba,colorchannelmixer=aa=0.7[wm]
- *   [ltdone][wm]overlay=W-w-80:80[outv]
+ *   [ltdone][wm]overlay=iw-w-80:80[outv]
  *
  * If no logo is available, watermark and lower-third logo overlays are skipped
  * (only the dark bar is drawn).
@@ -276,14 +276,14 @@ async function concatAndOverlay(opts: {
     overlayChain = [
       `[${logoInputIdx}:v]split[lsrc][wsrc]`,
       `[lsrc]scale=-1:80[ltlogo]`,
-      `[cv]drawbox=x=140:y=H-290:w=iw-280:h=100:color=black@0.4:t=fill[barred]`,
-      `[barred][ltlogo]overlay=150:H-270[ltdone]`,
+      `[cv]drawbox=x=140:y=ih-290:w=iw-280:h=100:color=black@0.4:t=fill[barred]`,
+      `[barred][ltlogo]overlay=150:ih-270[ltdone]`,
       `[wsrc]scale=-1:60[wm]`,
-      `[ltdone][wm]overlay=W-w-80:80[outv]`,
+      `[ltdone][wm]overlay=iw-w-80:80[outv]`,
     ].join(';')
   } else {
     // No logo: just the dark bar, no image overlays
-    overlayChain = `[cv]drawbox=x=140:y=H-290:w=iw-280:h=100:color=black@0.4:t=fill[outv]`
+    overlayChain = `[cv]drawbox=x=140:y=ih-290:w=iw-280:h=100:color=black@0.4:t=fill[outv]`
   }
 
   args.push(
