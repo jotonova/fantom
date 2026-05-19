@@ -256,7 +256,7 @@ export async function handleShortsBriefRender(
           logEvent({
             tenantId,
             kind: 'shorts.render.brand_failed',
-            severity: 'warning',
+            severity: 'error',
             subjectType: 'shorts_render',
             subjectId: renderId,
             metadata: {
