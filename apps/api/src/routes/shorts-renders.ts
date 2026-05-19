@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm'
 import fp from 'fastify-plugin'
 import type { FastifyPluginAsync } from 'fastify'
-import { db, shortsRenders } from '@fantom/db'
+import { db, shortsRenders, shortsBriefs } from '@fantom/db'
 import { logEvent } from '@fantom/observability'
 import { requireAuth } from '../plugins/auth.js'
 
@@ -9,8 +9,11 @@ import { requireAuth } from '../plugins/auth.js'
 
 const shortsRenderRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /shorts-renders/:id/cancel ─────────────────────────────────────────────
-  // Sets render status to 'cancelled'. The worker's next cancellation checkpoint
-  // will detect this and gracefully abort the job without retrying.
+  // Cancels the render: marks the render 'cancelled' AND immediately resets the
+  // brief back to 'ready' in the same transaction. Both happen atomically here
+  // so the UI reflects the correct state immediately regardless of where the
+  // worker is in its pipeline. The worker's cancellation checkpoints will also
+  // call patchShortsBrief('ready') when they fire — that's a harmless no-op.
   fastify.post<{ Params: { id: string } }>(
     '/shorts-renders/:id/cancel',
     { preHandler: requireAuth },
@@ -43,6 +46,13 @@ const shortsRenderRoutes: FastifyPluginAsync = async (fastify) => {
           .set({ status: 'cancelled', updatedAt: new Date() })
           .where(eq(shortsRenders.id, id))
           .returning()
+        // Reset the brief immediately so the UI shows 'ready' right away.
+        // The worker's checkpoint cleanup does the same thing when it fires,
+        // but that can be minutes away if ffmpeg is mid-encode.
+        await tx
+          .update(shortsBriefs)
+          .set({ status: 'ready', updatedAt: new Date() })
+          .where(eq(shortsBriefs.id, render.briefId))
         return row
       })
 
