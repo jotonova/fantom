@@ -279,7 +279,7 @@ export default function EditShortsBriefPage() {
     if (!title.trim()) { setSaveError('Title is required'); return }
     if (sourceAssetIds.length === 0) { setSaveError('Select at least one source clip'); return }
 
-    const validScenes = scenes.filter((s) => s.description.trim())
+    const validScenes = scenes.filter((s) => s.description.trim() || s.voiceover_script.trim())
     const mainScenes = validScenes.length > 0
       ? validScenes.map((s) => ({
           id: s.id,

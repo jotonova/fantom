@@ -174,8 +174,8 @@ export default function NewShortsBriefPage() {
       return
     }
 
-    // Collapse empty scenes — only send scenes with at least a description
-    const validScenes = scenes.filter((s) => s.description.trim())
+    // Keep scenes that have either a description or a voiceover script
+    const validScenes = scenes.filter((s) => s.description.trim() || s.voiceover_script.trim())
     const mainScenes = validScenes.length > 0
       ? validScenes.map((s) => ({
           id: s.id,
