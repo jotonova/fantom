@@ -44,6 +44,7 @@ export const shortsBriefs = pgTable(
     closing: text('closing'),
     closingVoiceoverScript: text('closing_voiceover_script'), // spoken VO for the closing CTA
     pacing: text('pacing').$type<'fast' | 'medium' | 'slow'>(),
+    density: text('density').$type<'low' | 'medium' | 'high'>().default('medium'),
 
     // Scene list — each scene has a description and optional voiceover script.
     // Shape: Array<{ id: string, description: string, voiceover_script?: string }> | null
@@ -84,6 +85,10 @@ export const shortsBriefs = pgTable(
     pacingCheck: check(
       'shorts_briefs_pacing_check',
       sql`${table.pacing} IN ('fast', 'medium', 'slow')`,
+    ),
+    densityCheck: check(
+      'shorts_briefs_density_check',
+      sql`${table.density} IN ('low', 'medium', 'high')`,
     ),
   }),
 )

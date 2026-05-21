@@ -25,6 +25,7 @@ interface ShortsBrief {
   closing: string | null
   closingVoiceoverScript: string | null
   pacing: 'fast' | 'medium' | 'slow' | null
+  density: 'low' | 'medium' | 'high' | null
   sourceAssetIds: string[]
   brandKitId: string | null
   voiceCloneId: string | null
@@ -294,6 +295,40 @@ export default function PreviewPage() {
             <div>
               <span className="block text-xs text-fantom-text-muted">Pacing</span>
               <span className="capitalize text-fantom-text">{brief.pacing ?? '—'}</span>
+            </div>
+            <div>
+              <span className="block text-xs text-fantom-text-muted">Cut Density</span>
+              {brief.status === 'draft' ? (
+                <div className="mt-1 flex gap-1">
+                  {(['low', 'medium', 'high'] as const).map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const updated = await apiFetch<ShortsBrief>(`/shorts-briefs/${id}`, {
+                            method: 'PATCH',
+                            body: JSON.stringify({ density: d }),
+                          })
+                          setData((prev) => prev ? { ...prev, brief: updated } : prev)
+                        } catch {
+                          // non-critical — ignore
+                        }
+                      }}
+                      className={[
+                        'rounded border px-2 py-0.5 text-xs capitalize transition-colors',
+                        (brief.density ?? 'medium') === d
+                          ? 'border-fantom-blue bg-fantom-blue/20 text-fantom-blue'
+                          : 'border-fantom-steel-border bg-fantom-steel text-fantom-text-muted hover:text-fantom-text',
+                      ].join(' ')}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="capitalize text-fantom-text">{brief.density ?? 'medium'}</span>
+              )}
             </div>
             <div>
               <span className="block text-xs text-fantom-text-muted">Brand Kit</span>

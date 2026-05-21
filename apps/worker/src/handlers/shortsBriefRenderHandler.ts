@@ -162,6 +162,7 @@ export async function handleShortsBriefRender(
         durationSeconds: a.durationSeconds,
         audioChannels: a.audioChannels,
         transcriptWordTimestamps: a.transcriptWordTimestamps as import('../lib/snapCuts.js').TranscriptWord[] | null,
+        sceneBoundaries: a.sceneBoundaries as number[] | null,
       }))
 
     if (clips.length === 0) {
@@ -183,7 +184,11 @@ export async function handleShortsBriefRender(
 
     const assembly = await assembleShortFromBrief(
       {
-        brief: { durationSeconds: brief.durationSeconds, pacing: brief.pacing },
+        brief: {
+          durationSeconds: brief.durationSeconds,
+          pacing: brief.pacing,
+          density: (brief.density as 'low' | 'medium' | 'high' | null) ?? 'medium',
+        },
         clips,
         workDir,
         renderId,
@@ -562,7 +567,8 @@ export async function handleShortsBriefRender(
       metadata: {
         renderId,
         briefId,
-        assemblyVersion: '1B.8',
+        assemblyVersion: '1B.9.1',
+        density: brief.density ?? 'medium',
         sourceClipCount: assembly.sourceClipCount,
         targetDurationS: brief.durationSeconds,
         actualDurationS: assembly.actualDurationSeconds,
@@ -601,7 +607,7 @@ export async function handleShortsBriefRender(
         assetId: asset.id,
         durationMs,
         r2Key,
-        assemblyVersion: '1B.8',
+        assemblyVersion: '1B.9.1',
         sourceClipCount: assembly.sourceClipCount,
         actualDurationS: assembly.actualDurationSeconds,
         targetDurationS: brief.durationSeconds,

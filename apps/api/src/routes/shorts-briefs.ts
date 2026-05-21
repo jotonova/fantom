@@ -17,6 +17,7 @@ import { requireAuth } from '../plugins/auth.js'
 
 const VALID_DURATIONS = new Set([15, 30, 45, 60])
 const VALID_PACINGS = new Set(['fast', 'medium', 'slow'])
+const VALID_DENSITIES = new Set(['low', 'medium', 'high'])
 const VALID_STATUSES = new Set(['draft', 'ready', 'rendering', 'rendered', 'failed'])
 
 // ── Client serialisation ──────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       closing?: string | null
       closingVoiceoverScript?: string | null
       pacing?: string | null
+      density?: string | null
       mainScenes?: Array<{ id: string; description: string; voiceover_script?: string }> | null
     }
   }>('/shorts-briefs', { preHandler: requireAuth }, async (request, reply) => {
@@ -80,6 +82,9 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
     }
     if (body.pacing !== undefined && body.pacing !== null && !VALID_PACINGS.has(body.pacing)) {
       return reply.code(400).send({ error: 'pacing must be fast, medium, or slow' })
+    }
+    if (body.density !== undefined && body.density !== null && !VALID_DENSITIES.has(body.density)) {
+      return reply.code(400).send({ error: 'density must be low, medium, or high' })
     }
 
     const tenantId = request.tenantId!
@@ -105,6 +110,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
           closing: body.closing ?? null,
           closingVoiceoverScript: body.closingVoiceoverScript ?? null,
           pacing: (body.pacing as ShortsBrief['pacing']) ?? null,
+          density: (body.density as ShortsBrief['density']) ?? 'medium',
           mainScenes: Array.isArray(body.mainScenes) ? body.mainScenes : null,
           status: 'draft',
         })
@@ -465,6 +471,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       closing?: string | null
       closingVoiceoverScript?: string | null
       pacing?: string | null
+      density?: string | null
       mainScenes?: Array<{ id: string; description: string; voiceover_script?: string }> | null
       status?: string
     }
@@ -578,6 +585,12 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
           return reply.code(400).send({ error: 'pacing must be fast, medium, or slow' })
         }
         patch.pacing = (body.pacing as ShortsBrief['pacing']) ?? null
+      }
+      if ('density' in body) {
+        if (body.density !== null && body.density !== undefined && !VALID_DENSITIES.has(body.density)) {
+          return reply.code(400).send({ error: 'density must be low, medium, or high' })
+        }
+        patch.density = (body.density as ShortsBrief['density']) ?? 'medium'
       }
       if ('mainScenes' in body) patch.mainScenes = Array.isArray(body.mainScenes) ? body.mainScenes : null
     }

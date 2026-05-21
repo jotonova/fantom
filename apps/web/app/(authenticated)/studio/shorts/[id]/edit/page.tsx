@@ -26,6 +26,7 @@ interface ShortsBrief {
   closing: string | null
   closingVoiceoverScript: string | null
   pacing: 'fast' | 'medium' | 'slow' | null
+  density: 'low' | 'medium' | 'high' | null
   sourceAssetIds: string[]
   brandKitId: string | null
   voiceCloneId: string | null
@@ -175,6 +176,7 @@ export default function EditShortsBriefPage() {
   const [title, setTitle] = useState('')
   const [durationSeconds, setDurationSeconds] = useState<15 | 30 | 45 | 60>(30)
   const [pacing, setPacing] = useState<'fast' | 'medium' | 'slow' | ''>('')
+  const [density, setDensity] = useState<'low' | 'medium' | 'high'>('medium')
   const [opening, setOpening] = useState('')
   const [openingVoiceoverScript, setOpeningVoiceoverScript] = useState('')
   const [scenes, setScenes] = useState<Scene[]>([makeScene(0)])
@@ -207,6 +209,7 @@ export default function EditShortsBriefPage() {
         setTitle(b.title)
         setDurationSeconds(b.durationSeconds as 15 | 30 | 45 | 60)
         setPacing(b.pacing ?? '')
+        setDensity(b.density ?? 'medium')
         setOpening(b.opening ?? '')
         setOpeningVoiceoverScript(b.openingVoiceoverScript ?? '')
         setScenes(
@@ -296,6 +299,7 @@ export default function EditShortsBriefPage() {
           title: title.trim(),
           durationSeconds,
           pacing: pacing || null,
+          density,
           opening: opening || null,
           openingVoiceoverScript: openingVoiceoverScript || null,
           mainScenes,
@@ -497,6 +501,34 @@ export default function EditShortsBriefPage() {
               <option value="medium">Medium — balanced pacing</option>
               <option value="slow">Slow — measured, cinematic</option>
             </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="density">Cut Density</Label>
+            <div className="flex gap-1">
+              {(['low', 'medium', 'high'] as const).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  disabled={isLocked}
+                  onClick={() => setDensity(d)}
+                  className={[
+                    'flex-1 rounded-fantom border px-3 py-2 text-sm capitalize transition-colors',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                    density === d
+                      ? 'border-fantom-blue bg-fantom-blue/20 text-fantom-blue'
+                      : 'border-fantom-steel-border bg-fantom-steel text-fantom-text-muted hover:text-fantom-text',
+                  ].join(' ')}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-fantom-text-muted">
+              {density === 'low' && 'Long segments, slow dwell — each clip plays fully.'}
+              {density === 'medium' && 'Balanced — one segment per clip, scene-snapped.'}
+              {density === 'high' && 'Maximum cuts — sub-clips at every scene boundary.'}
+            </p>
           </div>
         </CardContent>
       </Card>
