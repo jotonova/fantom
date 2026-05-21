@@ -454,14 +454,16 @@ export async function handleShortsBriefRender(
       await checkCancelled(renderId, tenantId)
       log('generating captions…')
 
-      // Build per-clip caption inputs.
-      // clipTrimStartMs: where in the source asset the clip was trimmed from (converts
-      //   source-relative AssemblyAI timestamps to clip-local times).
-      // clipStartMsInVideo: where the clip starts in the assembled video.
-      const captionClips = clips.map((clip, i) => ({
-        transcriptWords: clip.transcriptWordTimestamps,
-        clipTrimStartMs: (assembly.clipTrimStartTimes[i] ?? 0) * 1000,
-        clipStartMsInVideo: (assembly.clipStartTimes[i] ?? 0) * 1000,
+      // Build per-SEGMENT caption inputs (one entry per plan segment, not per source clip).
+      // For MEDIUM density this is 1:1 with clips; for HIGH density each clip produces N segments.
+      // Each segment carries its own trimStart + videoStart so the formula
+      //   (word.start - trimStartMs) + startMsInVideo
+      // places words at the correct position in the assembled timeline regardless of density.
+      const captionClips = assembly.segmentCaptionOffsets.map((seg) => ({
+        transcriptWords: (clips[seg.clipIndex]?.transcriptWordTimestamps ?? null) as import('../lib/snapCuts.js').TranscriptWord[] | null,
+        clipTrimStartMs: seg.trimStartMs,
+        clipStartMsInVideo: seg.startMsInVideo,
+        clipDurationMs: seg.durationMs,
       }))
 
       // Build VO segments (probe each VO file for its duration)

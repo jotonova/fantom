@@ -74,13 +74,27 @@ export interface AssemblyResult {
   sourceClipCount: number
   ffmpegLog: string
   /** Start time of each SOURCE CLIP's first segment in the assembled video (seconds).
-   *  clipStartTimes[0] = 0. Per-clip (not per-segment) so VO/caption alignment is unchanged. */
+   *  clipStartTimes[0] = 0. Per-clip (not per-segment) — used by VO offset logic only. */
   clipStartTimes: number[]
   /** Total planned playout duration of all segments from each source clip (seconds). */
   clipDurations: number[]
   /** Trim start of each source clip's first segment in the source asset (seconds).
-   *  Used to align source-relative AssemblyAI transcript timestamps. */
+   *  Kept for VO offset alignment (1B.6) — captions must use segmentCaptionOffsets instead. */
   clipTrimStartTimes: number[]
+  /**
+   * Per-segment caption offsets — one entry per plan segment, ordered as they appear in the video.
+   * Use these (NOT clipStartTimes) when building CaptionClip[] for generateCaptionsForRender.
+   *
+   * For MEDIUM density each clip produces 1 segment → same behaviour as the old per-clip array.
+   * For HIGH density each clip produces N segments → each segment gets its own trim/video offset
+   * so caption words are anchored to the correct position in the assembled timeline.
+   */
+  segmentCaptionOffsets: Array<{
+    clipIndex: number       // which source clip this segment came from
+    trimStartMs: number     // start of this segment within the source clip (ms, post-snap)
+    startMsInVideo: number  // start of this segment in the assembled video timeline (ms)
+    durationMs: number      // planned playback duration of this segment (ms, post-snap)
+  }>
 }
 
 // ── Internal types ────────────────────────────────────────────────────────────
@@ -599,6 +613,13 @@ export async function assembleShortFromBrief(
       `${plan.length} segment(s) from ${downloaded.length} clip(s)`,
   )
 
+  const segmentCaptionOffsets = plan.map((seg, pi) => ({
+    clipIndex: seg.clipIndex,
+    trimStartMs: seg.startOffset * 1000,
+    startMsInVideo: (planSegmentStarts[pi] ?? 0) * 1000,
+    durationMs: seg.duration * 1000,
+  }))
+
   return {
     outputPath,
     actualDurationSeconds,
@@ -607,5 +628,6 @@ export async function assembleShortFromBrief(
     clipStartTimes,
     clipDurations,
     clipTrimStartTimes,
+    segmentCaptionOffsets,
   }
 }

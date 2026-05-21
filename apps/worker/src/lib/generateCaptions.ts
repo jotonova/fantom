@@ -23,6 +23,9 @@ export interface CaptionClip {
   clipTrimStartMs: number
   /** Where this clip begins in the assembled video (ms). */
   clipStartMsInVideo: number
+  /** Planned playback duration of this segment (ms). Words starting at or after this offset
+   *  belong to a later segment and must be excluded to prevent bleed-over. */
+  clipDurationMs?: number
 }
 
 export interface CaptionVOSegment {
@@ -228,6 +231,8 @@ export async function generateCaptionsForRender(opts: {
       const localEnd = tw.end - clip.clipTrimStartMs
       // Skip words that fall outside the clip's trimmed window
       if (localEnd <= 0) continue
+      // Skip words that start at or after this segment's planned end — they belong to a later segment
+      if (clip.clipDurationMs != null && localStart >= clip.clipDurationMs) continue
       sourceWords.push({
         text: tw.text,
         start: Math.max(0, localStart) + clip.clipStartMsInVideo,
