@@ -569,7 +569,7 @@ export async function handleShortsBriefRender(
       metadata: {
         renderId,
         briefId,
-        assemblyVersion: '1B.9.1',
+        assemblyVersion: '1B.9.2a',
         density: brief.density ?? 'medium',
         sourceClipCount: assembly.sourceClipCount,
         targetDurationS: brief.durationSeconds,
@@ -609,7 +609,7 @@ export async function handleShortsBriefRender(
         assetId: asset.id,
         durationMs,
         r2Key,
-        assemblyVersion: '1B.9.1',
+        assemblyVersion: '1B.9.2a',
         sourceClipCount: assembly.sourceClipCount,
         actualDurationS: assembly.actualDurationSeconds,
         targetDurationS: brief.durationSeconds,

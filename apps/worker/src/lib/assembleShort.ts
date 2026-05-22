@@ -7,8 +7,9 @@
  *
  *   low    — whole-clip segments only, few cuts (same cut count as today)
  *   medium — one representative segment per clip (matches 1B.5 baseline)
- *   high   — all scene-boundary segments; time-division fallback when a clip
- *             has no interior boundaries so HIGH always produces more cuts
+ *   high   — every scene boundary becomes a cut; long scenes (>5s) are
+ *             further time-subdivided within the boundary so HIGH reads dense
+ *             on mixed footage; time-division fallback when no boundaries exist
  *
  * Pacing (fast/medium/slow) still controls WHICH representative segment is
  * chosen per clip in 'low' and 'medium' density, and snap tolerance. They
@@ -219,7 +220,28 @@ function selectSegments(
   if (!hasInterior) {
     return timeDivisionSegments(clipIndex, dur)
   }
-  return naturalSegs
+
+  // Multi-scene clip: use every boundary as a cut, THEN time-subdivide any
+  // individual scene that is longer than HIGH_FALLBACK_SEGMENT_S so HIGH reads
+  // dense even on mixed footage where one scene is long.
+  const result: ClipSegment[] = []
+  for (const seg of naturalSegs) {
+    if (seg.naturalDuration <= HIGH_FALLBACK_SEGMENT_S) {
+      result.push(seg)
+    } else {
+      const N = Math.max(2, Math.ceil(seg.naturalDuration / HIGH_FALLBACK_SEGMENT_S))
+      const sliceDur = seg.naturalDuration / N
+      for (let i = 0; i < N; i++) {
+        const s = seg.startInClip + i * sliceDur
+        const e = i === N - 1 ? seg.endInClip : seg.startInClip + (i + 1) * sliceDur
+        const len = e - s
+        if (len >= MIN_SEGMENT_S) {
+          result.push({ clipIndex, startInClip: s, endInClip: e, naturalDuration: len })
+        }
+      }
+    }
+  }
+  return result.length > 0 ? result : naturalSegs
 }
 
 // ── Clip plan (segment model) ─────────────────────────────────────────────────
