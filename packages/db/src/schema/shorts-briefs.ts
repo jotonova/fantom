@@ -56,6 +56,7 @@ export const shortsBriefs = pgTable(
 
     // Output options
     captionsEnabled: boolean('captions_enabled').notNull().default(true),
+    useBroll: boolean('use_broll').notNull().default(false),
 
     // Status
     status: text('status')

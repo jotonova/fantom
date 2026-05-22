@@ -35,6 +35,7 @@ import {
   patchShortsBrief,
   getShortsBriefRow,
   getAssetsInOrder,
+  getBrollPoolAssets,
   createShortsRenderedAsset,
   getTenantSlug,
   getBrandKitRow,
@@ -178,6 +179,28 @@ export async function handleShortsBriefRender(
       log(`WARNING: ${skippedCount} asset(s) missing normalizedR2Key — skipped`)
     }
 
+    // ── B-roll pool ───────────────────────────────────────────────────────────
+    // Fetch tenant library clips not in source_asset_ids when use_broll=true.
+
+    const brollPoolAssets = brief.useBroll
+      ? await getBrollPoolAssets(tenantId, brief.sourceAssetIds)
+      : []
+
+    const brollClips = brollPoolAssets
+      .filter((a) => a.normalizedR2Key != null)
+      .map((a) => ({
+        assetId: a.id,
+        normalizedR2Key: a.normalizedR2Key!,
+        durationSeconds: a.durationSeconds,
+        audioChannels: a.audioChannels,
+        transcriptWordTimestamps: null, // B-roll never contributes to captions
+        sceneBoundaries: a.sceneBoundaries as number[] | null,
+      }))
+
+    if (brief.useBroll) {
+      log(`B-roll pool: ${brollClips.length} clip(s) available`)
+    }
+
     // ── Assemble ──────────────────────────────────────────────────────────────
     // checkCancelled is wired in before each long step inside assembleShortFromBrief:
     // once before downloads, once before ffmpeg. We also check here before upload.
@@ -188,8 +211,10 @@ export async function handleShortsBriefRender(
           durationSeconds: brief.durationSeconds,
           pacing: brief.pacing,
           density: (brief.density as 'low' | 'medium' | 'high' | null) ?? 'medium',
+          useBroll: brief.useBroll ?? false,
         },
         clips,
+        brollClips,
         workDir,
         renderId,
         log,
@@ -460,7 +485,11 @@ export async function handleShortsBriefRender(
       //   (word.start - trimStartMs) + startMsInVideo
       // places words at the correct position in the assembled timeline regardless of density.
       const captionClips = assembly.segmentCaptionOffsets.map((seg) => ({
-        transcriptWords: (clips[seg.clipIndex]?.transcriptWordTimestamps ?? null) as import('../lib/snapCuts.js').TranscriptWord[] | null,
+        // Hero segments (clipIndex < sourceClipCount) use transcript words.
+        // B-roll segments always get null — never attribute caption words to B-roll.
+        transcriptWords: seg.clipIndex < assembly.sourceClipCount
+          ? (clips[seg.clipIndex]?.transcriptWordTimestamps ?? null) as import('../lib/snapCuts.js').TranscriptWord[] | null
+          : null,
         clipTrimStartMs: seg.trimStartMs,
         clipStartMsInVideo: seg.startMsInVideo,
         clipDurationMs: seg.durationMs,
@@ -569,8 +598,10 @@ export async function handleShortsBriefRender(
       metadata: {
         renderId,
         briefId,
-        assemblyVersion: '1B.9.2a',
+        assemblyVersion: '1B.9.2b',
         density: brief.density ?? 'medium',
+        useBroll: brief.useBroll ?? false,
+        brollClipCount: brollClips.length,
         sourceClipCount: assembly.sourceClipCount,
         targetDurationS: brief.durationSeconds,
         actualDurationS: assembly.actualDurationSeconds,
@@ -609,7 +640,9 @@ export async function handleShortsBriefRender(
         assetId: asset.id,
         durationMs,
         r2Key,
-        assemblyVersion: '1B.9.2a',
+        assemblyVersion: '1B.9.2b',
+        useBroll: brief.useBroll ?? false,
+        brollClipCount: brollClips.length,
         sourceClipCount: assembly.sourceClipCount,
         actualDurationS: assembly.actualDurationSeconds,
         targetDurationS: brief.durationSeconds,

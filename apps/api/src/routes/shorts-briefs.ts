@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, notInArray, lt, sql } from 'drizzle-orm'
 import fp from 'fastify-plugin'
 import type { FastifyPluginAsync } from 'fastify'
 import { db, shortsBriefs, shortsRenders, assets, brandKits, voiceClones, musicTracks } from '@fantom/db'
@@ -58,6 +58,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       voiceCloneId?: string | null
       musicTrackId?: string | null
       captionsEnabled?: boolean
+      useBroll?: boolean
       durationSeconds?: number
       opening?: string | null
       openingVoiceoverScript?: string | null
@@ -104,6 +105,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
           voiceCloneId: body.voiceCloneId ?? null,
           musicTrackId: body.musicTrackId ?? null,
           ...(typeof body.captionsEnabled === 'boolean' && { captionsEnabled: body.captionsEnabled }),
+          ...(typeof body.useBroll === 'boolean' && { useBroll: body.useBroll }),
           durationSeconds,
           opening: body.opening ?? null,
           openingVoiceoverScript: body.openingVoiceoverScript ?? null,
@@ -256,9 +258,27 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
         voiceCloneName = clone?.name ?? brief.voiceCloneId
       }
 
+      // Count B-roll pool (tenant video assets preprocessed and NOT in sourceAssetIds)
+      let brollClipCount = 0
+      if (brief.useBroll) {
+        const brollRows = await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+          const baseConditions = [
+            eq(assets.tenantId, tenantId),
+            eq(assets.kind, 'video'),
+            sql`${assets.normalizedR2Key} IS NOT NULL`,
+          ]
+          const whereClause = brief.sourceAssetIds.length > 0
+            ? and(...baseConditions, notInArray(assets.id, brief.sourceAssetIds))
+            : and(...baseConditions)
+          return tx.select({ id: assets.id }).from(assets).where(whereClause)
+        })
+        brollClipCount = brollRows.length
+      }
+
       // Compute estimates and run validation
       const briefForValidation = toBriefForValidation(brief)
-      const estimates = estimateBriefCost(briefForValidation, clips.length)
+      const estimates = estimateBriefCost(briefForValidation, clips.length, brollClipCount)
       const validation = validateBriefForReady(briefForValidation, clips)
 
       return reply.send({
@@ -465,6 +485,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       voiceCloneId?: string | null
       musicTrackId?: string | null
       captionsEnabled?: boolean
+      useBroll?: boolean
       durationSeconds?: number
       opening?: string | null
       openingVoiceoverScript?: string | null
@@ -570,6 +591,7 @@ const shortsBriefRoutes: FastifyPluginAsync = async (fastify) => {
       if ('voiceCloneId' in body) patch.voiceCloneId = body.voiceCloneId ?? null
       if ('musicTrackId' in body) patch.musicTrackId = body.musicTrackId ?? null
       if (typeof body.captionsEnabled === 'boolean') patch.captionsEnabled = body.captionsEnabled
+      if (typeof body.useBroll === 'boolean') patch.useBroll = body.useBroll
       if (typeof body.durationSeconds === 'number') {
         if (!VALID_DURATIONS.has(body.durationSeconds)) {
           return reply.code(400).send({ error: 'durationSeconds must be 15, 30, 45, or 60' })

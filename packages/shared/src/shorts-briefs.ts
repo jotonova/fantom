@@ -188,15 +188,18 @@ export interface CostEstimate {
   totalUsd: number
   /** Number of scenes whose index ≥ clip count — VO chars are counted but won't render. */
   outOfRangeSceneCount: number
+  /** Number of B-roll clips that will be woven into the assembly. 0 when use_broll=false. */
+  brollClipCount: number
 }
 
 /**
  * Pure cost estimation — reused by API (preview endpoint) and UI.
  *
- * @param brief     Brief fields needed for estimation.
- * @param clipCount Optional clip count to compute outOfRangeSceneCount.
+ * @param brief          Brief fields needed for estimation.
+ * @param clipCount      Optional hero clip count to compute outOfRangeSceneCount.
+ * @param brollClipCount Number of B-roll clips available when use_broll=true.
  */
-export function estimateBriefCost(brief: BriefForValidation, clipCount?: number): CostEstimate {
+export function estimateBriefCost(brief: BriefForValidation, clipCount?: number, brollClipCount = 0): CostEstimate {
   // Count only the VO script texts — the fields that actually get synthesized to speech.
   // Descriptive text (opening, closing direction) is not voiced.
   const voTexts = [
@@ -221,5 +224,6 @@ export function estimateBriefCost(brief: BriefForValidation, clipCount?: number)
     renderCostUsd,
     totalUsd: voCostUsd + renderCostUsd,
     outOfRangeSceneCount,
+    brollClipCount,
   }
 }

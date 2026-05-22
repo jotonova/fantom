@@ -1,7 +1,7 @@
 import { db, jobs, assets, voiceClones, tenants, tenantSettings, distributions, shortsJobs, shortsRenders, shortsBriefs, brandKits, runwayUsage } from '@fantom/db'
 import type { Job as DbJob, Asset, VoiceClone, Distribution, ShortsJob, ShortsRender, ShortsBrief, BrandKit } from '@fantom/db'
 import type { DestinationKind } from '@fantom/distribution-bus'
-import { and, eq, gte, inArray, lt, sql, sum } from 'drizzle-orm'
+import { and, eq, gte, inArray, lt, notInArray, sql, sum } from 'drizzle-orm'
 
 // ── Job helpers ────────────────────────────────────────────────────────────────
 
@@ -367,6 +367,36 @@ export async function getShortsBriefRow(
  * Fetches assets by IDs and returns them in the same order as `assetIds`.
  * Assets not found in the DB are silently omitted.
  */
+/**
+ * Returns preprocessed video assets in the tenant library that are NOT in
+ * sourceAssetIds — the B-roll pool for use_broll=true assembly.
+ *
+ * Only assets with a normalizedR2Key are included (preprocessing complete).
+ * Rendered output assets are excluded because they never get a normalizedR2Key
+ * (preprocessing only runs on uploaded source clips).
+ *
+ * Limited to 10 clips by default — enough for B-roll variety without bloating
+ * the render worker's download phase.
+ */
+export async function getBrollPoolAssets(
+  tenantId: string,
+  sourceAssetIds: string[],
+  limit = 10,
+): Promise<Array<typeof assets.$inferSelect>> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`)
+    const baseConditions = [
+      eq(assets.tenantId, tenantId),
+      eq(assets.kind, 'video'),
+      sql`${assets.normalizedR2Key} IS NOT NULL`,
+    ]
+    const whereClause = sourceAssetIds.length > 0
+      ? and(...baseConditions, notInArray(assets.id, sourceAssetIds))
+      : and(...baseConditions)
+    return tx.select().from(assets).where(whereClause).limit(limit)
+  })
+}
+
 export async function getAssetsInOrder(
   assetIds: string[],
   tenantId: string,

@@ -30,6 +30,7 @@ interface ShortsBrief {
   brandKitId: string | null
   voiceCloneId: string | null
   captionsEnabled: boolean
+  useBroll: boolean
   status: BriefStatus
   errorMessage: string | null
 }
@@ -48,6 +49,7 @@ interface CostEstimate {
   renderCostUsd: number
   totalUsd: number
   outOfRangeSceneCount: number
+  brollClipCount: number
 }
 
 interface ValidationResult {
@@ -356,6 +358,40 @@ export default function PreviewPage() {
               <span className="block text-xs text-fantom-text-muted">Captions</span>
               <span className="text-fantom-text">{brief.captionsEnabled ? 'On' : 'Off'}</span>
             </div>
+            <div>
+              <span className="block text-xs text-fantom-text-muted">B-roll</span>
+              {brief.status === 'draft' ? (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={brief.useBroll}
+                  onClick={async () => {
+                    try {
+                      const updated = await apiFetch<ShortsBrief>(`/shorts-briefs/${id}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ useBroll: !brief.useBroll }),
+                      })
+                      setData((prev) => prev ? { ...prev, brief: updated } : prev)
+                    } catch {
+                      // non-critical — ignore
+                    }
+                  }}
+                  className={[
+                    'mt-1 relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-fantom-blue',
+                    brief.useBroll ? 'bg-fantom-blue' : 'bg-fantom-steel-border',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition-transform',
+                      brief.useBroll ? 'translate-x-4' : 'translate-x-0',
+                    ].join(' ')}
+                  />
+                </button>
+              ) : (
+                <span className="text-fantom-text">{brief.useBroll ? 'On' : 'Off'}</span>
+              )}
+            </div>
           </div>
 
           {(brief.opening || brief.openingVoiceoverScript) && (
@@ -561,6 +597,12 @@ export default function PreviewPage() {
               <span className="font-medium text-fantom-text">Total estimate</span>
               <span className="font-semibold text-fantom-text">{fmtUsd(estimates.totalUsd)}</span>
             </div>
+            {estimates.brollClipCount > 0 && (
+              <div className="flex items-baseline justify-between">
+                <span className="text-fantom-text-muted">B-roll clips available</span>
+                <span className="font-medium text-fantom-text">{estimates.brollClipCount}</span>
+              </div>
+            )}
             {estimates.outOfRangeSceneCount > 0 && (
               <p className="pt-1 text-xs text-amber-400/80">
                 Note: {estimates.outOfRangeSceneCount} scene{estimates.outOfRangeSceneCount !== 1 ? 's' : ''} past the last clip — VO chars counted above but won't render.

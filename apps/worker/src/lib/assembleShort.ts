@@ -62,8 +62,16 @@ export interface AssemblyInput {
     durationSeconds: number
     pacing: 'fast' | 'medium' | 'slow' | null
     density: 'low' | 'medium' | 'high' | null
+    useBroll: boolean
   }
+  /** Hero clips — the source_asset_ids for this brief. */
   clips: SourceClipInput[]
+  /**
+   * B-roll pool — tenant library clips NOT in source_asset_ids.
+   * Populated when brief.useBroll=true; empty array otherwise.
+   * These clips are woven between hero segments; they carry no VO captions.
+   */
+  brollClips: SourceClipInput[]
   workDir: string
   renderId: string
   log: (msg: string) => void
@@ -244,48 +252,99 @@ function selectSegments(
   return result.length > 0 ? result : naturalSegs
 }
 
-// ── Clip plan (segment model) ─────────────────────────────────────────────────
+// ── Segment interleaving ──────────────────────────────────────────────────────
 
 /**
- * Builds the ffmpeg plan from all selected segments across all clips.
+ * Proportionally interleaves hero and B-roll segments so that B-roll clips are
+ * evenly distributed throughout the assembled timeline rather than bunched at
+ * the end.
  *
- * Budget allocation: total natural duration of all segments is scaled to
- * `target` proportionally. LOW density uses pacing-based start offsets
- * within the whole-clip segment (matching 1B.5 pacing behaviour exactly).
+ * Algorithm: at each step, pick the segment pool whose "used fraction" is lower.
+ * This gives the closest approximation to perfect alternation regardless of how
+ * many segments each pool contains.
  *
- * Speech-aware snapping (snapCuts.ts) is applied to each segment's
- * start/end within the source clip time coordinate system.
+ * Examples:
+ *   3 hero, 2 broll → h0 b0 h1 b1 h2
+ *   6 hero, 5 broll → h0 b0 h1 b1 h2 b2 h3 b3 h4 b4 h5
+ */
+function interleaveSegments(hero: ClipSegment[], broll: ClipSegment[]): ClipSegment[] {
+  if (broll.length === 0) return hero
+  const result: ClipSegment[] = []
+  let h = 0, b = 0
+  const hLen = hero.length, bLen = broll.length
+  while (h < hLen || b < bLen) {
+    const bDone = b >= bLen
+    const hDone = h >= hLen
+    const pickHero = bDone || (!hDone && h / hLen <= b / bLen)
+    if (pickHero) {
+      result.push(hero[h++]!)
+    } else {
+      result.push(broll[b++]!)
+    }
+  }
+  return result
+}
+
+// ── Clip plan (segment model) ─────────────────────────────────────────────────
+
+type DownloadedClip = {
+  localPath: string
+  durationSeconds: number
+  hasAudio: boolean
+  words: TranscriptWord[] | null
+  sceneBoundaries: number[] | null
+}
+
+/**
+ * Builds the ffmpeg plan from all selected segments across hero + B-roll clips.
+ *
+ * heroClips  — source_asset_ids clips. Their clipIndex values are 0..N-1.
+ * brollClips — B-roll pool clips (empty when use_broll=false). Their clipIndex
+ *              values are N..N+M-1, offset so the combined array heroClips+brollClips
+ *              can be indexed uniformly.
+ *
+ * When brollClips is non-empty, hero and B-roll segments are proportionally
+ * interleaved so B-roll is distributed throughout the timeline.
+ *
+ * Budget allocation: total natural duration is scaled to `target` proportionally.
+ * LOW density uses pacing-based start offsets (matching 1B.5 behaviour).
+ * Speech-aware snapping (snapCuts.ts) is applied per segment.
  */
 function buildSegmentPlan(
-  clips: Array<{
-    localPath: string
-    durationSeconds: number
-    hasAudio: boolean
-    words: TranscriptWord[] | null
-    sceneBoundaries: number[] | null
-  }>,
+  heroClips: DownloadedClip[],
+  brollClips: DownloadedClip[],
   target: number,
   pacing: 'fast' | 'medium' | 'slow' | null,
   density: 'low' | 'medium' | 'high',
   log: (msg: string) => void,
 ): ClipPlan[] {
-  const N = clips.length
+  const heroCount = heroClips.length
+  const allClips: DownloadedClip[] = [...heroClips, ...brollClips]
   const p = pacing ?? 'fast'
 
   // ── Step 1: Select candidate segments ──────────────────────────────────────
+  // Hero and B-roll segments are selected independently then interleaved.
+  // clipIndex for hero: 0..heroCount-1; for broll: heroCount..heroCount+brollCount-1.
 
-  const allSegments: ClipSegment[] = []
-  for (let i = 0; i < N; i++) {
-    const clip = clips[i]!
-    const selected = selectSegments(i, clip.durationSeconds, clip.sceneBoundaries, density, pacing)
-    allSegments.push(...selected)
+  const heroSegs: ClipSegment[] = []
+  for (let i = 0; i < heroCount; i++) {
+    const clip = heroClips[i]!
+    heroSegs.push(...selectSegments(i, clip.durationSeconds, clip.sceneBoundaries, density, pacing))
   }
 
+  const brollSegs: ClipSegment[] = []
+  for (let i = 0; i < brollClips.length; i++) {
+    const clip = brollClips[i]!
+    brollSegs.push(...selectSegments(heroCount + i, clip.durationSeconds, clip.sceneBoundaries, density, pacing))
+  }
+
+  const allSegments = interleaveSegments(heroSegs, brollSegs)
+  const totalClips = allClips.length
   const totalSegments = allSegments.length
   const totalNatural = allSegments.reduce((acc, s) => acc + s.naturalDuration, 0)
 
   log(
-    `density=${density} pacing=${p}: ${N} clip(s) → ${totalSegments} segment(s), ` +
+    `density=${density} pacing=${p}: ${heroCount} hero + ${brollClips.length} broll → ${totalSegments} segment(s), ` +
       `natural=${totalNatural.toFixed(1)}s, target=${target}s`,
   )
 
@@ -298,6 +357,7 @@ function buildSegmentPlan(
 
   type RawSlice = { startOffset: number; duration: number }
   let rawSlices: RawSlice[]
+  const N = totalClips  // for LOW pacing slicing: total clip count
 
   if (density === 'low') {
     // Mirror original buildClipPlan pacing logic applied to whole-clip segments.
@@ -346,7 +406,7 @@ function buildSegmentPlan(
   const tolerance = snapToleranceMs(pacing)
 
   return allSegments.map((seg, i) => {
-    const clip = clips[seg.clipIndex]!
+    const clip = allClips[seg.clipIndex]!
     const raw = rawSlices[i]!
     const words = clip.words
 
@@ -475,7 +535,7 @@ export async function assembleShortFromBrief(
   input: AssemblyInput,
   checkCancelled: () => Promise<void>,
 ): Promise<AssemblyResult> {
-  const { brief, clips, workDir, renderId, log } = input
+  const { brief, clips, brollClips, workDir, renderId, log } = input
   const outputPath = join(workDir, 'output.mp4')
   const density = brief.density ?? 'medium'
 
@@ -483,13 +543,7 @@ export async function assembleShortFromBrief(
 
   await checkCancelled()
 
-  const downloaded: Array<{
-    localPath: string
-    durationSeconds: number
-    hasAudio: boolean
-    words: TranscriptWord[] | null
-    sceneBoundaries: number[] | null
-  }> = []
+  const downloaded: DownloadedClip[] = []
 
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i]!
@@ -533,18 +587,54 @@ export async function assembleShortFromBrief(
     )
   }
 
+  // ── Download B-roll clips (when use_broll=true) ────────────────────────────
+
+  const downloadedBroll: DownloadedClip[] = []
+
+  if (brief.useBroll && brollClips.length > 0) {
+    log(`B-roll pool: ${brollClips.length} clip(s) — downloading…`)
+    for (let i = 0; i < brollClips.length; i++) {
+      const clip = brollClips[i]!
+      const localPath = join(workDir, `broll-${i}.mp4`)
+      try {
+        await getObjectToFile(clip.normalizedR2Key, localPath)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        log(`WARNING: skipping B-roll ${i + 1} (asset ${clip.assetId}) — download failed: ${msg}`)
+        continue
+      }
+      const storedDur = clip.durationSeconds != null ? Number(clip.durationSeconds) : 0
+      let durationSeconds: number
+      if (storedDur > 0) {
+        durationSeconds = storedDur
+      } else {
+        const probe = await probeVideo(localPath)
+        durationSeconds = probe.durationSeconds
+      }
+      downloadedBroll.push({
+        localPath,
+        durationSeconds,
+        hasAudio: (clip.audioChannels ?? 0) > 0,
+        words: null,  // B-roll never contributes captions regardless of transcript
+        sceneBoundaries: clip.sceneBoundaries,
+      })
+    }
+    log(`B-roll: ${downloadedBroll.length}/${brollClips.length} clip(s) downloaded`)
+  }
+
   // ── Build segment plan ─────────────────────────────────────────────────────
 
   await checkCancelled()
 
-  const plan = buildSegmentPlan(downloaded, brief.durationSeconds, brief.pacing, density, log)
+  const plan = buildSegmentPlan(downloaded, downloadedBroll, brief.durationSeconds, brief.pacing, density, log)
   const plannedTotal = plan.reduce((acc, c) => acc + c.duration, 0)
 
   // ── Compute per-clip timeline anchors (for VO + caption alignment) ──────────
   //
-  // VO and captions remain 1:1 per source clip (not per segment). The first
-  // segment from each clip anchors its clip-level start time in the video.
-  // clipDurations[i] = total of all segments from clip i.
+  // These arrays are HERO-ONLY (size = downloaded.length). B-roll clip indices
+  // (ci >= downloaded.length) are skipped. VO offset logic uses these to place
+  // voiceover at the correct position for each hero clip. Captions use
+  // segmentCaptionOffsets (per-segment) where B-roll segments get transcriptWords=null.
 
   const planSegmentStarts: number[] = []
   let planCumulative = 0
@@ -560,6 +650,8 @@ export async function assembleShortFromBrief(
   for (let pi = 0; pi < plan.length; pi++) {
     const seg = plan[pi]!
     const ci = seg.clipIndex
+    // Only update hero clip anchors (B-roll clips have ci >= downloaded.length)
+    if (ci >= downloaded.length) continue
     clipTotalDuration[ci] = (clipTotalDuration[ci] ?? 0) + seg.duration
     if (clipFirstStart[ci] === -1) {
       clipFirstStart[ci] = planSegmentStarts[pi]!
@@ -572,14 +664,15 @@ export async function assembleShortFromBrief(
   const clipTrimStartTimes = clipFirstTrim
 
   log(
-    `plan: ${downloaded.length} clip(s), ${plan.length} segment(s), ` +
+    `plan: ${downloaded.length} hero + ${downloadedBroll.length} broll clip(s), ${plan.length} segment(s), ` +
       `target=${brief.durationSeconds}s, planned=${plannedTotal.toFixed(1)}s, ` +
       `density=${density} pacing=${brief.pacing ?? 'fast (default)'}`,
   )
   for (let i = 0; i < plan.length; i++) {
     const p = plan[i]!
+    const isBroll = p.clipIndex >= downloaded.length
     log(
-      `  [clip${p.clipIndex + 1} seg${i + 1}] ` +
+      `  [${isBroll ? 'broll' : 'clip'}${isBroll ? p.clipIndex - downloaded.length + 1 : p.clipIndex + 1} seg${i + 1}] ` +
         `offset=${p.startOffset.toFixed(2)}s take=${p.duration.toFixed(2)}s ` +
         `of ${p.clipDuration.toFixed(2)}s${p.hasAudio ? '' : ' (no audio)'}`,
     )
@@ -632,7 +725,7 @@ export async function assembleShortFromBrief(
   const { size: outputSizeBytes } = await stat(outputPath)
   log(
     `done: ${actualDurationSeconds.toFixed(2)}s, ${(outputSizeBytes / 1_048_576).toFixed(1)}MB, ` +
-      `${plan.length} segment(s) from ${downloaded.length} clip(s)`,
+      `${plan.length} segment(s) from ${downloaded.length} hero + ${downloadedBroll.length} broll clip(s)`,
   )
 
   const segmentCaptionOffsets = plan.map((seg, pi) => ({
